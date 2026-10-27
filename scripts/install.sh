@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: ./install.sh [--bin-dir DIR] [--skills-dir DIR]... [--no-skill] [--uninstall]
+Usage: scripts/install.sh [--bin-dir DIR] [--skills-dir DIR]... [--no-skill] [--uninstall]
 
   --bin-dir DIR     Where to install the binary.
                     Default: /usr/local/bin if writable, otherwise ~/.local/bin.
@@ -24,7 +24,7 @@ see "Use it from any agent" in docs/how-to.md.
 EOF
 }
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 skill_source="$repo_dir/skills/simctlhouse"
 bin_dir=""
 skills_dirs=()
@@ -60,7 +60,7 @@ if [[ $uninstall -eq 1 ]]; then
         if [[ -x "$binary" ]] && "$binary" skill status --skills-dir /dev/null >/dev/null 2>&1; then
             "$binary" skill uninstall ${skills_args[@]+"${skills_args[@]}"}
         else
-            echo "error: $binary cannot remove skill links (missing or too old). Run ./install.sh first, then ./install.sh --uninstall." >&2
+            echo "error: $binary cannot remove skill links (missing or too old). Run scripts/install.sh first, then scripts/install.sh --uninstall." >&2
             exit 1
         fi
     fi

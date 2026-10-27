@@ -362,7 +362,7 @@ struct Skill: ParsableCommand {
               Codex        ~/.codex/skills
               pi           ~/.pi/agent/skills ($PI_CODING_AGENT_DIR/skills)
             or into the --skills-dir directories you name instead.
-            --source links another skill directory, such as a checkout's skills/simctlhouse (./install.sh does that).
+            --source links another skill directory, such as a checkout's skills/simctlhouse (scripts/install.sh does that).
             The links point at the prefix, so `brew upgrade simctlhouse` updates the skill.
             Anything else at the link location is left alone.
             """,

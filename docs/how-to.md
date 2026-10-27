@@ -3,10 +3,10 @@
 ## Install
 
 ```sh
-./install.sh                                   # binary + skill for every agent found
-./install.sh --skills-dir ~/.my-agent/skills   # link the skill into a specific skills directory instead
-./install.sh --bin-dir ~/bin --no-skill        # custom location, binary only
-./install.sh --uninstall                       # remove binary and skill links
+scripts/install.sh                                   # binary + skill for every agent found
+scripts/install.sh --skills-dir ~/.my-agent/skills   # link the skill into a specific skills directory instead
+scripts/install.sh --bin-dir ~/bin --no-skill        # custom location, binary only
+scripts/install.sh --uninstall                       # remove binary and skill links
 ```
 
 Requires Xcode with at least one iOS simulator runtime (`xcodebuild -downloadPlatform iOS`).
@@ -26,7 +26,7 @@ A release puts the binary in `<prefix>/bin` and the skill in `<prefix>/share/sim
 Link the skill into your agents once:
 
 ```sh
-simctlhouse skill install                               # every agent found, same detection as install.sh
+simctlhouse skill install                               # every agent found (Claude Code, Codex, pi)
 simctlhouse skill install --skills-dir ~/.my-agent/skills
 simctlhouse skill status                                # where each link points: linked, missing, broken or foreign
 simctlhouse skill uninstall                             # before uninstalling the package
@@ -35,8 +35,8 @@ simctlhouse skill uninstall                             # before uninstalling th
 The binary finds the skill by following its own symlinks from the path it was started as, and links the first `../share/simctlhouse/skills/simctlhouse` it finds.
 For Homebrew that is `$(brew --prefix)/share/simctlhouse/...`, which `brew upgrade` re-points at the new version, so the skill updates with the binary.
 Running the binary from inside `Cellar/` links a versioned path that the next upgrade removes; the command warns about it.
-`skill install` replaces earlier simctlhouse links, including ones `./install.sh` made, and changes nothing if any link location holds something else.
-`--source DIR` links another skill directory instead of the shipped one; `./install.sh` uses it to link the checkout.
+`skill install` replaces earlier simctlhouse links, including ones `scripts/install.sh` made, and changes nothing if any link location holds something else.
+`--source DIR` links another skill directory instead of the shipped one; `scripts/install.sh` uses it to link the checkout.
 `skill uninstall` also removes links left broken by an uninstalled package.
 
 ## Use it from any agent
@@ -44,8 +44,8 @@ Running the binary from inside `Cellar/` links a versioned path that the next up
 simctlhouse itself is a plain CLI; any agent that can run shell commands can use it.
 The skill only teaches agents the workflow, and it comes in the [Agent Skills](https://agentskills.io/specification) (SKILL.md) format that Claude Code, Codex, pi and several other agents load.
 
-- Claude Code, Codex and pi: `./install.sh` links the skill automatically.
-- Another agent that loads SKILL.md skills: `./install.sh --skills-dir <that agent's skills directory>`.
+- Claude Code, Codex and pi: `scripts/install.sh` links the skill automatically.
+- Another agent that loads SKILL.md skills: `scripts/install.sh --skills-dir <that agent's skills directory>`.
 - An agent without skills: add this to the project's `AGENTS.md` (or the agent's own instructions file):
 
   ```markdown

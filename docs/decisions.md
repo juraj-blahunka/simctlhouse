@@ -187,7 +187,7 @@ Not fixed yet: a fix (skip the run when `simctl` reports no runtimes, and requir
 
 simctlhouse is a plain CLI with no agent integration, so any agent that runs shell commands can use it.
 The workflow lives in `skills/simctlhouse/SKILL.md`, in the Agent Skills format several agents share, rather than under one agent's directory.
-`install.sh` links it into every agent it detects (Claude Code, Codex, pi) and into any `--skills-dir`; agents without skills get a short `AGENTS.md` snippet from the how-to.
+`scripts/install.sh` links it into every agent it detects (Claude Code, Codex, pi) and into any `--skills-dir`; agents without skills get a short `AGENTS.md` snippet from the how-to.
 Repository instructions live in `AGENTS.md`, which most agents read; `CLAUDE.md` is a symlink to it so there is one source.
 Agents that read both, such as pi, take `AGENTS.md` first, so the instructions are not loaded twice.
 Trade-off: the skill cannot use features only one agent has, and detection only covers agents whose skills directory we know.
@@ -206,7 +206,7 @@ A release (a notarized binary, distributed through a Homebrew tap) installs the 
 The binary finds the prefix from the path it was started as (`_NSGetExecutablePath`), following symlinks one hop at a time and normalising `..` textually, because `standardizedFileURL` resolves symlinks and would land in the versioned keg.
 Homebrew cannot create the links itself: formulae must not write to `$HOME`, so the formula's caveats ask for the one-time `skill install`.
 A link counts as ours when its target is a `simctlhouse` directory whose `SKILL.md` is named `simctlhouse`, or such a path that no longer exists (Agent Skills name the directory after the skill).
-`install.sh` stays the local build path and calls `skill install --source <checkout>/skills/simctlhouse`, so skill edits take effect immediately and agent detection and link ownership live only in the binary.
+`scripts/install.sh` stays the local build path and calls `skill install --source <checkout>/skills/simctlhouse`, so skill edits take effect immediately and agent detection and link ownership live only in the binary.
 Switching between a checkout and a release just replaces the link.
-We chose `--source` over having `install.sh` mimic the release layout (`<prefix>/share` linking into the checkout): it is explicit and adds nothing to the prefix, at the cost of local installs not exercising the shipped-skill lookup.
+We chose `--source` over having `scripts/install.sh` mimic the release layout (`<prefix>/share` linking into the checkout): it is explicit and adds nothing to the prefix, at the cost of local installs not exercising the shipped-skill lookup.
 Trade-off: one manual step after `brew install`, and `brew uninstall` leaves broken links unless `skill uninstall` ran first; `skill status` shows them.

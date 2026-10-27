@@ -11,7 +11,7 @@ swift build                         # debug build
 swift build -c release              # .build/release/simctlhouse
 swift test                          # unit tests (FakeBackend, no simulators)
 swift format lint -r Sources Tests  # must be clean; `swift format format -i -r Sources Tests` fixes most
-./install.sh                        # build release + install binary + link skill into detected agents (see --help)
+scripts/install.sh                  # build release + install binary + link skill into detected agents (see --help)
 ```
 
 ## Layout

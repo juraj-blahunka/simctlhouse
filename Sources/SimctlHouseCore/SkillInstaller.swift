@@ -16,7 +16,7 @@ public struct SkillInstaller: Sendable {
         self.environment = environment
     }
 
-    /// Honours `$HOME` like `install.sh` does; `homeDirectoryForCurrentUser` reads the user database and ignores it.
+    /// Honours `$HOME` like shell scripts do; `homeDirectoryForCurrentUser` reads the user database and ignores it.
     public static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> SkillInstaller {
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
         return SkillInstaller(home: home ?? FileManager.default.homeDirectoryForCurrentUser, environment: environment)
@@ -27,7 +27,7 @@ public struct SkillInstaller: Sendable {
         source.pathComponents.contains("Cellar")
     }
 
-    /// Skills directories of the agents set up on this machine, the same ones `install.sh` detects.
+    /// Skills directories of the agents set up on this machine: Claude Code, Codex and pi.
     public func detectedSkillsDirectories() -> [URL] {
         let piHome = environment["PI_CODING_AGENT_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
         let agentHomes = [home.appending(path: ".claude"), home.appending(path: ".codex"), piHome ?? home.appending(path: ".pi/agent")]
@@ -50,7 +50,7 @@ public struct SkillInstaller: Sendable {
         return nil
     }
 
-    /// A skill directory given explicitly, such as a checkout's `skills/simctlhouse` that `install.sh` links so edits take effect immediately.
+    /// A skill directory given explicitly, such as a checkout's `skills/simctlhouse` that `scripts/install.sh` links so edits take effect immediately.
     public static func skill(at path: String, relativeTo directory: String = FileManager.default.currentDirectoryPath) throws -> URL {
         let source = lexical(path, relativeTo: directory)
         guard source.lastPathComponent == skillName, isSkill(source) else { throw SimctlHouseError.notASkill(source.path) }
