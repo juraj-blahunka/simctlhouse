@@ -189,7 +189,8 @@ One-time setup on the machine that releases:
   The password prompt hides what you paste; a trailing space (the Passwords app adds one when copying) fails with HTTP 401.
   In CI, set `NOTARY_KEY` (path to the `.p8`), `NOTARY_KEY_ID` and `NOTARY_ISSUER` instead.
 
-For each release:
+For each release, ask your agent to release a version: the `release` skill (`.agents/skills/release/SKILL.md`) runs every step below, checks preconditions first, drafts release notes for you to accept or revise, and asks before publishing anything.
+By hand:
 
 1. Bump `version:` in `Sources/simctlhouse/SimctlHouse.swift` and commit.
 2. Run `scripts/release.sh 1.4.0`.

@@ -26,6 +26,8 @@ scripts/smoke-test.sh TARBALL       # run a release tarball against real simulat
 - `Tests/SimctlHouseCoreTests/Fakes.swift`: `FakeBackend`, `FakeScanner`, `TestClock`, `Harness`.
 - `skills/simctlhouse/SKILL.md`: the agent skill, in the Agent Skills (SKILL.md) format that Claude Code, Codex, pi and other agents load.
   Update it whenever CLI behaviour or flags change, and keep it free of agent-specific instructions.
+- `.agents/skills/release/SKILL.md`: the maintainer skill that publishes a release (tag, GitHub release, Homebrew tap).
+  `.claude/skills/release` is a symlink to it, like `CLAUDE.md` is to this file.
 - `docs/`: decisions, architecture, how-tos.
 
 ## Invariants
