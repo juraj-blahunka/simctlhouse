@@ -25,9 +25,10 @@ extension ProcessScanner {
         guard !udids.isEmpty, let lines = try? commandLines() else { return [] }
         var inUse: Set<String> = []
         for line in lines {
-            let upper = line.uppercased()
             // Our own invocations (e.g. a concurrent `simctlhouse release <UDID>`) are not foreign use.
-            if upper.contains("SIMCTLHOUSE") { continue }
+            // Match the executable only: other tools may well have "simctlhouse" somewhere in a path argument.
+            if Self.isSimctlhouse(line) { continue }
+            let upper = line.uppercased()
             for udid in udids where !inUse.contains(udid.uppercased()) {
                 let needle = udid.uppercased()
                 guard upper.contains(needle) else { continue }
@@ -36,5 +37,12 @@ extension ProcessScanner {
             }
         }
         return inUse
+    }
+
+    /// `ps` joins argv with spaces, so an executable path containing a space is not recognised; it then counts as foreign use,
+    /// which only makes simctlhouse more cautious.
+    static func isSimctlhouse(_ commandLine: String) -> Bool {
+        let executable = commandLine.split(separator: " ", maxSplits: 1).first ?? ""
+        return executable.split(separator: "/").last == "simctlhouse"
     }
 }

@@ -75,6 +75,14 @@ import Testing
         #expect(try h.pool.acquire(AcquireRequest(spec: DeviceSpec())).udid == first.udid)
     }
 
+    @Test func otherToolsMentioningSimctlhouseStillCountAsForeignUse() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        try h.pool.release(device.name)
+        h.scanner.set(["/usr/bin/xcodebuild -project /Users/me/src/simctlhouse-demo/App.xcodeproj -destination id=\(device.udid!)"])
+        #expect(try h.pool.collectGarbage(shutDownAllFree: true).shutDown.isEmpty)
+        #expect(h.backend.device(device.udid)?.state == "Booted")
+    }
+
     @Test func releaseRules() throws {
         let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         #expect(throws: SimctlHouseError.leaseMismatch(device: device.name)) { try h.pool.release(device.name, leaseId: "nope") }
