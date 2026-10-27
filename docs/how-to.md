@@ -3,19 +3,42 @@
 ## Install
 
 ```sh
-./install.sh                                   # binary + agent skill
+./install.sh                                   # binary + skill for every agent found
+./install.sh --skills-dir ~/.my-agent/skills   # link the skill into a specific skills directory instead
 ./install.sh --bin-dir ~/bin --no-skill        # custom location, binary only
-./install.sh --uninstall                       # remove binary and skill link
+./install.sh --uninstall                       # remove binary and skill links
 ```
 
 Requires Xcode with at least one iOS simulator runtime (`xcodebuild -downloadPlatform iOS`).
 
 The script builds a release binary and installs it to `--bin-dir`.
 The default is `/usr/local/bin` when writable, otherwise `~/.local/bin`, and it warns if that directory is not on your `PATH`.
-It symlinks `.claude/skills/simctlhouse` into `~/.claude/skills` (`--skills-dir` to override), so every Claude Code project picks up the skill and edits in this repo take effect immediately.
-If a real directory already sits at the link location, the script stops rather than delete it.
+It symlinks `skills/simctlhouse` into the skills directory of every agent set up on the machine: `~/.claude/skills` for Claude Code, `~/.codex/skills` for Codex, and `~/.pi/agent/skills` for pi (or `$PI_CODING_AGENT_DIR/skills`).
+`--skills-dir` (repeatable) replaces that detection with the directories you name.
+Because these are links, every project picks up the skill and edits in this repo take effect immediately.
+If something other than a link into this checkout already sits at the link location, the script stops rather than delete it.
 Re-running it is safe and is how you upgrade after pulling.
 `--uninstall` leaves the simulator pool alone; run `simctlhouse delete --all --force` first to remove it.
+
+## Use it from any agent
+
+simctlhouse itself is a plain CLI; any agent that can run shell commands can use it.
+The skill only teaches agents the workflow, and it comes in the [Agent Skills](https://agentskills.io/specification) (SKILL.md) format that Claude Code, Codex, pi and several other agents load.
+
+- Claude Code, Codex and pi: `./install.sh` links the skill automatically.
+- Another agent that loads SKILL.md skills: `./install.sh --skills-dir <that agent's skills directory>`.
+- An agent without skills: add this to the project's `AGENTS.md` (or the agent's own instructions file):
+
+  ```markdown
+  ## iOS simulators
+
+  Other agents share this machine's simulators, so never pick one yourself (`booted`, a device name, or one from `xcrun simctl list`).
+  Run `UDID=$(simctlhouse acquire --holder "<task>")` before building or testing, and use `-destination "id=$UDID"` and the UDID everywhere.
+  Run `simctlhouse renew "$UDID"` during long work and `simctlhouse release "$UDID"` when done, also after failures.
+  `simctlhouse --help` has the details.
+  ```
+
+Set `SIMCTLHOUSE_HOLDER` in the agent's environment to label its leases without passing `--holder` every time.
 
 ## Use a device from a script or agent
 

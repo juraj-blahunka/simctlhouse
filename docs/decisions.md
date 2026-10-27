@@ -177,3 +177,12 @@ GC retires a device as `vanished` the first time one `simctl list devices` call 
 If CoreSimulator briefly returns an incomplete list, for example while its service restarts, a live device would be dropped from the registry and never managed again.
 This is the likely cause of the vanished device in D16, which disappeared during a window where every `simctl` call reported no runtimes.
 Not fixed yet: a fix (skip the run when `simctl` reports no runtimes, and require the device directory to be gone too) should first be reproduced end to end.
+
+## D24. Agent agnostic
+
+simctlhouse is a plain CLI with no agent integration, so any agent that runs shell commands can use it.
+The workflow lives in `skills/simctlhouse/SKILL.md`, in the Agent Skills format several agents share, rather than under one agent's directory.
+`install.sh` links it into every agent it detects (Claude Code, Codex, pi) and into any `--skills-dir`; agents without skills get a short `AGENTS.md` snippet from the how-to.
+Repository instructions live in `AGENTS.md`, which most agents read; `CLAUDE.md` is a symlink to it so there is one source.
+Agents that read both, such as pi, take `AGENTS.md` first, so the instructions are not loaded twice.
+Trade-off: the skill cannot use features only one agent has, and detection only covers agents whose skills directory we know.
