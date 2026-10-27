@@ -210,3 +210,17 @@ A link counts as ours when its target is a `simctlhouse` directory whose `SKILL.
 Switching between a checkout and a release just replaces the link.
 We chose `--source` over having `scripts/install.sh` mimic the release layout (`<prefix>/share` linking into the checkout): it is explicit and adds nothing to the prefix, at the cost of local installs not exercising the shipped-skill lookup.
 Trade-off: one manual step after `brew install`, and `brew uninstall` leaves broken links unless `skill uninstall` ran first; `skill status` shows them.
+
+## D27. Releases: notarized arm64 binary in a prefix-shaped tarball
+
+We ship a prebuilt binary through our own tap rather than building from source in the formula, so users need neither Swift nor a build, and the binary they run is the one we signed and notarized.
+It is a formula, not a cask: only formulae get the stable `opt` and `share` links that the skill links rely on (D26).
+The tarball mirrors an install prefix, so the formula only moves `bin/` and `share/` into place, and the same archive works when unpacked by hand.
+The binary is arm64 only: Xcode has deprecated x86_64, and the formula says `depends_on arch: :arm64` so Intel Macs get a clear error.
+`scripts/build.sh` is the only way the binary is built, for `scripts/install.sh` and `scripts/release.sh` alike, so a local install runs the bytes a release ships (only the signing timestamp differs).
+It strips the debug symbol table, which holds absolute build paths and would publish the builder's home directory, signs with the hardened runtime, and checks the minimum macOS against `Package.swift`, from which the formula's `depends_on macos:` is derived.
+After notarization the script asks Apple's ticket service whether a ticket is published for the binary's code hash, the lookup users' Macs make; `spctl` cannot be used, because asked before the ticket is published it caches "Unnotarized" for that hash.
+The version stays hardcoded in `SimctlHouse.swift`; `scripts/release.sh` refuses to build when it differs from the release version, which avoids generated sources and keeps `swift build` from any checkout meaningful.
+The script verifies its own output by installing the tarball into a temporary directory and running `skill install` from it.
+Trade-off: a bare binary cannot be stapled, so Gatekeeper checks notarization online on first run; Homebrew does not quarantine formula downloads, so this only matters for manual downloads.
+

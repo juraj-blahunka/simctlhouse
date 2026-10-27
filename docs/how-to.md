@@ -177,3 +177,27 @@ simctlhouse acquire --model com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-in
 
 Model names are matched exactly (case-insensitive) against `xcrun simctl list devicetypes`.
 
+## Make a release
+
+Releases are an arm64 binary, signed with a Developer ID and notarized, plus the skill, distributed through the `juraj-blahunka/tap` Homebrew tap.
+
+One-time setup on the machine that releases:
+
+- A "Developer ID Application" certificate in the keychain (`security find-identity -v -p codesigning` lists it).
+- notarytool credentials: `xcrun notarytool store-credentials notarytool-profile`, with an app-specific password or an App Store Connect API key.
+  The profile belongs to the Apple ID, not this project, so other projects on the machine can share it.
+  The password prompt hides what you paste; a trailing space (the Passwords app adds one when copying) fails with HTTP 401.
+  In CI, set `NOTARY_KEY` (path to the `.p8`), `NOTARY_KEY_ID` and `NOTARY_ISSUER` instead.
+
+For each release:
+
+1. Bump `version:` in `Sources/simctlhouse/SimctlHouse.swift` and commit.
+2. Run `scripts/release.sh 1.4.0`.
+   It refuses to run if the version does not match, if the sources have uncommitted changes, or if tag `v1.4.0` exists elsewhere.
+   It runs the tests and lint, builds and signs through `scripts/build.sh`, notarizes, checks that Apple published the notarization ticket, packs `dist/simctlhouse-1.4.0-macos.tar.gz`, installs that tarball into a temporary directory to check it, and writes `dist/simctlhouse.rb`.
+3. Tag the commit `v1.4.0`, push it, and attach the tarball to a GitHub release of that tag.
+4. Copy `dist/simctlhouse.rb` to `Formula/simctlhouse.rb` in the tap and push.
+
+`--skip-notarize` and `--allow-dirty` let you try the script without credentials or a commit; never publish such a build.
+The tarball is laid out like an install prefix (`bin/`, `share/simctlhouse/skills/simctlhouse`, `LICENSE`), so it also works unpacked into any prefix by hand.
+
