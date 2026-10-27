@@ -399,7 +399,7 @@ import Testing
         let vanished = try h.pool.acquire(AcquireRequest(holder: "victim"))
         let deleted = try h.pool.acquire(AcquireRequest(holder: "owner"))
         h.backend.removeBehindOurBack(vanished.udid!)
-        try h.pool.delete([deleted.name], force: true)
+        _ = try h.pool.delete([deleted.name], force: true)
 
         let lost = try #require(try h.pool.history(vanished.name).first)
         #expect(lost.retiredReason == .vanished)
@@ -412,7 +412,7 @@ import Testing
 
     @Test func forcedEraseEndsTheLease() throws {
         let device = try h.pool.acquire(AcquireRequest(holder: "agent-1"))
-        try h.pool.erase(device.name, force: true)
+        _ = try h.pool.erase(device.name, force: true)
         let history = try #require(try h.pool.history(device.udid!).first)
         #expect(history.name == device.name)
         #expect(history.leases.map(\.outcome) == [.erased])
@@ -422,14 +422,14 @@ import Testing
     @Test func retiredDevicesAreCapped() throws {
         for _ in 0..<(PoolState.retiredLimit + 3) {
             let device = try h.pool.create(DeviceSpec())
-            try h.pool.delete([device.name], force: false)
+            _ = try h.pool.delete([device.name], force: false)
         }
         #expect(try h.state().retired.count == PoolState.retiredLimit)
     }
 
     @Test func newNamesDoNotReuseRetiredOnes() throws {
         let device = try h.pool.create(DeviceSpec())
-        try h.pool.delete([device.name], force: false)
+        _ = try h.pool.delete([device.name], force: false)
         #expect(try h.state().retired.map(\.name) == [device.name])
         for _ in 0..<20 { #expect(try h.pool.create(DeviceSpec()).name != device.name) }
     }
