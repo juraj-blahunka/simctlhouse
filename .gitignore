@@ -1,0 +1,16 @@
+# SwiftPM and Xcode build output
+.build/
+.swiftpm/
+*.xcodeproj
+xcuserdata/
+DerivedData/
+.index-build/
+
+# Local Claude Code settings; the shared skill in .claude/skills is committed
+.claude/settings.local.json
+
+# Editors and macOS
+.vscode/
+.idea/
+*.swp
+.DS_Store

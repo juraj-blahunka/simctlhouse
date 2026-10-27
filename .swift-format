@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "lineLength": 160,
+  "indentation": { "spaces": 4 },
+  "rules": { "AlwaysUseLowerCamelCase": true, "UseLetInEveryBoundCaseVariable": false }
+}
