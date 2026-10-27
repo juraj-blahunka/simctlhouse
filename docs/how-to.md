@@ -9,9 +9,11 @@ scripts/install.sh --bin-dir ~/bin --no-skill        # custom location, binary o
 scripts/install.sh --uninstall                       # remove binary and skill links
 ```
 
-Requires Xcode with at least one iOS simulator runtime (`xcodebuild -downloadPlatform iOS`).
+Requires an Apple silicon Mac and Xcode with at least one iOS simulator runtime (`xcodebuild -downloadPlatform iOS`).
 
-The script builds a release binary and installs it to `--bin-dir`.
+The script builds the binary exactly as a release does, through `scripts/build.sh`: arm64, stripped of build paths, signed with the hardened runtime (your Developer ID if the keychain has one, otherwise ad-hoc).
+So what you run locally behaves like what users get.
+It installs the binary to `--bin-dir`.
 The default is `/usr/local/bin` when writable, otherwise `~/.local/bin`, and it warns if that directory is not on your `PATH`.
 It then runs `simctlhouse skill install --source <checkout>/skills/simctlhouse`, which symlinks the skill into the skills directory of every agent set up on the machine: `~/.claude/skills` for Claude Code, `~/.codex/skills` for Codex, and `~/.pi/agent/skills` for pi (or `$PI_CODING_AGENT_DIR/skills`).
 `--skills-dir` (repeatable) replaces that detection with the directories you name.
@@ -174,3 +176,4 @@ simctlhouse acquire --model com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-in
 ```
 
 Model names are matched exactly (case-insensitive) against `xcrun simctl list devicetypes`.
+

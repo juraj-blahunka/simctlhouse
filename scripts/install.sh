@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds simctlhouse, installs the binary, and links the agent skill into each coding agent's skills directory.
+# Builds simctlhouse the way a release does (scripts/build.sh), installs the binary, and links the agent skill
+# from this checkout into each coding agent's skills directory.
 # Safe to re-run: it rebuilds, replaces the binary, and refreshes the skill links.
 set -euo pipefail
 
@@ -71,12 +72,15 @@ fi
 command -v swift >/dev/null || { echo "error: swift not found. Install Xcode or the Xcode command line tools." >&2; exit 1; }
 xcrun simctl help >/dev/null 2>&1 || { echo "error: xcrun simctl is unavailable. Install Xcode and run 'sudo xcode-select -s /Applications/Xcode.app'." >&2; exit 1; }
 
-step "Building release binary"
-swift build -c release --package-path "$repo_dir"
+# The same build a release ships, so what you test locally is what users get.
+build_dir="$(mktemp -d)"
+trap 'rm -rf "$build_dir"' EXIT
+"$repo_dir/scripts/build.sh" "$build_dir/simctlhouse"
 
 step "Installing $binary"
 mkdir -p "$bin_dir"
-install -m 755 "$repo_dir/.build/release/simctlhouse" "$binary"
+# -S replaces the file by rename: rewriting a signed binary in place can leave the kernel's signature cache stale.
+install -S -m 755 "$build_dir/simctlhouse" "$binary"
 
 if [[ $link_skill -eq 1 ]]; then
     # Link the checkout rather than a copy, so edits to the skill take effect immediately.
