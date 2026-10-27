@@ -52,7 +52,7 @@ public struct PoolDevice: Codable, Equatable, Sendable {
     /// How many finished leases a device remembers.
     public static let historyLimit = 5
 
-    public enum Status: String, Codable, Sendable {
+    public enum Status: String, Codable, CaseIterable, Sendable {
         /// Name reserved, simulator is being created. `udid` may still be nil.
         case provisioning
         /// In the pool, free to acquire.

@@ -352,19 +352,11 @@ public struct Pool: Sendable {
         return udid
     }
 
-    /// All devices, or only those named by `refs` (names or UDIDs), in pool order.
-    public func list(_ refs: [String] = []) throws -> [DeviceInfo] {
+    /// Devices matching `filter`, in pool order. Like `simctl list`, no match is an empty list, not an error.
+    public func list(_ filter: DeviceFilter = DeviceFilter([])) throws -> [DeviceInfo] {
         let (gc, catalog) = try concurrently({ try runGarbageCollection() }, { try Catalog(backend: backend) })
         let live = try gc.untouchedLive ?? liveDevices()
-        let state = try store.snapshot()
-        let devices =
-            try refs.isEmpty
-            ? state.devices
-            : refs.map { ref in
-                guard let index = state.index(of: ref) else { throw SimctlHouseError.deviceNotFound(ref) }
-                return state.devices[index]
-            }
-        return devices.map { describe($0, live: live, catalog: catalog) }
+        return try store.snapshot().devices.map { describe($0, live: live, catalog: catalog) }.filter(filter.matches)
     }
 
     /// Lease history of every device, including ones that left the pool, or of the one device matching `ref`.

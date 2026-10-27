@@ -189,22 +189,34 @@ struct UDID: ParsableCommand {
 }
 
 struct List: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "List simctlhouse devices.")
+    static let configuration = CommandConfiguration(
+        abstract: "List simctlhouse devices.",
+        discussion: """
+            Filters work like `simctl list devices`:
+              simctlhouse list booted      by state: booted, shutdown
+              simctlhouse list leased      by status: available, leased,
+                                           provisioning, maintenance
+              simctlhouse list agent-7     by search term: name, UDID, model,
+                                           iOS version or holder
+            Every keyword must match; a device matching any search term is shown.
+            No match prints nothing. `simctlhouse udid` fails with exit code 3.
+            """
+    )
 
-    @Argument(help: ArgumentHelp("Only show these devices. Default: all.", valueName: DeviceRef.valueName))
-    var devices: [String] = []
+    @Argument(help: ArgumentHelp("State or status keywords and search terms. Default: all devices.", valueName: "filter"))
+    var filters: [String] = []
 
     @OptionGroup var output: OutputOptions
 
     func run() throws {
         try Runtime.run { pool in
-            let devices = try pool.list(devices)
+            let devices = try pool.list(DeviceFilter(filters))
             if output.json {
                 try Runtime.printJSON(devices)
                 return
             }
             guard !devices.isEmpty else {
-                Runtime.note("No devices yet. `simctlhouse acquire` creates one on demand.")
+                Runtime.note(filters.isEmpty ? "No devices yet. `simctlhouse acquire` creates one on demand." : "No matching devices.")
                 return
             }
             print(Format.table(devices))

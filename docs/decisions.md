@@ -138,6 +138,7 @@ Agents mostly hold UDIDs, people mostly read names, so every command that takes 
 `acquire <name|udid>` leases that specific free device, for an agent that wants its earlier device back with the app still installed.
 It fails with exit code 5 instead of falling back to another device, because the caller asked for that one.
 `history` also resolves names and UDIDs a device no longer has (after expiry or deletion).
+`list` is the exception: it filters like `simctl list devices` (D25), so a name or UDID there is a search term.
 
 ## D18. Independent `simctl` calls run in parallel
 
@@ -190,3 +191,10 @@ The workflow lives in `skills/simctlhouse/SKILL.md`, in the Agent Skills format 
 Repository instructions live in `AGENTS.md`, which most agents read; `CLAUDE.md` is a symlink to it so there is one source.
 Agents that read both, such as pi, take `AGENTS.md` first, so the instructions are not loaded twice.
 Trade-off: the skill cannot use features only one agent has, and detection only covers agents whose skills directory we know.
+
+## D25. `list` filters like `simctl list devices`
+
+`list` takes state keywords (`booted`, `shutdown`), status keywords (`available`, `leased`, `provisioning`, `maintenance`) and search terms, the way `simctl list devices booted` and `simctl list devices <search term>` do.
+Every keyword must match; a device matching any search term is shown, and a term matches a substring of the name, UDID, model, `iOS <version>` or holder, case-insensitively.
+Device names always contain a hyphen and UDIDs are hex, so keywords never collide with a device.
+As in `simctl`, no match is an empty list with exit code 0; `udid` remains the exact lookup that fails with exit code 3.

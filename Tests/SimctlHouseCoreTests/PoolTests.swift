@@ -313,13 +313,23 @@ import Testing
         #expect(throws: SimctlHouseError.deviceBusy(device: "brave-otter", status: .provisioning)) { try h.pool.udid(of: "brave-otter") }
     }
 
-    @Test func listFiltersByNameOrUDID() throws {
-        let a = try h.pool.create(DeviceSpec())
-        let b = try h.pool.create(DeviceSpec(family: .ipad))
-        #expect(try h.pool.list().count == 2)
-        #expect(try h.pool.list([b.udid!]).map(\.name) == [b.name])
-        #expect(try h.pool.list([b.name, a.name]).map(\.name) == [b.name, a.name])
-        #expect(throws: SimctlHouseError.deviceNotFound("ghost-town")) { try h.pool.list(["ghost-town"]) }
+    @Test func listFiltersLikeSimctl() throws {
+        let leased = try h.pool.acquire(AcquireRequest(holder: "agent-7"))
+        let phone = try h.pool.create(DeviceSpec())
+        let pad = try h.pool.create(DeviceSpec(family: .ipad))
+        func names(_ arguments: String...) throws -> [String] { try h.pool.list(DeviceFilter(arguments)).map(\.name) }
+
+        #expect(try names() == [leased.name, phone.name, pad.name])
+        #expect(try names(pad.udid!.lowercased()) == [pad.name])
+        #expect(try names(pad.name, phone.name) == [phone.name, pad.name])
+        #expect(try names("ipad") == [pad.name])
+        #expect(try names("iOS 27.0", "ghost") == [leased.name, phone.name, pad.name])
+        #expect(try names("AGENT-7") == [leased.name])
+        #expect(try names("booted") == [leased.name])
+        #expect(try names("Shutdown", "available") == [phone.name, pad.name])
+        #expect(try names("available", "ipad") == [pad.name])
+        #expect(try names("leased", "ipad").isEmpty)
+        #expect(try names("ghost-town").isEmpty)
     }
 
     // MARK: - history
