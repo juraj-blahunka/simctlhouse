@@ -32,6 +32,7 @@ simctlhouse release "$UDID"                       # back to the pool, still boot
 | `release <name\|udid> [--lease-id ID]` | Return a device to the pool |
 | `renew <name\|udid> [--lease-id ID]` | Extend a lease by 30 minutes from now |
 | `list [<name\|udid>...] [--json]` | Show all simctlhouse devices, or only the given ones |
+| `udid <name\|udid>` | Print a device's UDID |
 | `history [<name\|udid>] [--json]` | Show who held devices, when, and how each lease ended |
 | `create [--device] [--model] [--os]` | Add a free device to the pool ahead of time |
 | `reset <name\|udid> [--force]` | Erase a device (keeps the name, new UDID) |

@@ -71,6 +71,7 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
 Every command that takes a device accepts its name or its UDID.
 
 - `simctlhouse list [<name|udid>...]` shows devices, their status, holder and time left (`--json` available).
+- `simctlhouse udid <name>` prints the UDID of a device you know by name.
 - `simctlhouse history [<name|udid>]` shows who held a device, when, and how each lease ended (released, expired, vanished, ...).
   Use it when a device disappeared or misbehaved; old names and UDIDs still resolve.
 - `simctlhouse renew <udid>` extends your lease by 30 minutes from now.

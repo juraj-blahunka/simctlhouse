@@ -266,6 +266,23 @@ import Testing
         #expect(try h.state().devices.map(\.status) == [.available])
     }
 
+    @Test func udidResolvesANameOrUDID() throws {
+        let device = try h.pool.create(DeviceSpec())
+        #expect(try h.pool.udid(of: device.name) == device.udid)
+        #expect(try h.pool.udid(of: device.udid!.lowercased()) == device.udid)
+        #expect(throws: SimctlHouseError.deviceNotFound("ghost-town")) { try h.pool.udid(of: "ghost-town") }
+    }
+
+    @Test func udidOfADeviceBeingCreatedIsBusy() throws {
+        try StateStore(paths: HousePaths(root: h.root)).transaction { state in
+            state.devices.append(
+                PoolDevice(
+                    name: "brave-otter", udid: nil, deviceTypeIdentifier: "type.iPhone-18-Pro", runtimeIdentifier: "rt.iOS-27-0", status: .provisioning,
+                    now: h.clock.now))
+        }
+        #expect(throws: SimctlHouseError.deviceBusy(device: "brave-otter", status: .provisioning)) { try h.pool.udid(of: "brave-otter") }
+    }
+
     @Test func listFiltersByNameOrUDID() throws {
         let a = try h.pool.create(DeviceSpec())
         let b = try h.pool.create(DeviceSpec(family: .ipad))

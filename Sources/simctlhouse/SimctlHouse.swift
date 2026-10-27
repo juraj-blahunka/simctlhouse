@@ -16,7 +16,7 @@ struct SimctlHouse: ParsableCommand {
             Machine-readable output goes to stdout, human messages to stderr.
             """,
         version: "0.1.0",
-        subcommands: [Acquire.self, Release.self, Renew.self, List.self, History.self, Create.self, Delete.self, Reset.self, GC.self]
+        subcommands: [Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Reset.self, GC.self]
     )
 }
 
@@ -162,6 +162,21 @@ struct Renew: ParsableCommand {
                 Runtime.note("Renewed \(info.name). Lease expires in \(Format.minutes(until: info.expiresAt)).")
             }
         }
+    }
+}
+
+struct UDID: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "udid",
+        abstract: "Print a device's UDID.",
+        discussion: "For scripts that know a device by name: `xcodebuild -destination \"id=$(simctlhouse udid amber-falcon)\"`."
+    )
+
+    @Argument(help: ArgumentHelp("The device.", valueName: DeviceRef.valueName))
+    var device: String
+
+    func run() throws {
+        try Runtime.run { pool in print(try pool.udid(of: device)) }
     }
 }
 

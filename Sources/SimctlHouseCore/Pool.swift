@@ -313,6 +313,17 @@ public struct Pool: Sendable {
         return try info(for: device.name)
     }
 
+    /// The current UDID of a pool device. Needs no device type or runtime listing, so it is cheaper than `list`.
+    public func udid(of ref: String) throws -> String {
+        try collectGarbage()
+        let state = try store.snapshot()
+        guard let index = state.index(of: ref) else { throw SimctlHouseError.deviceNotFound(ref) }
+        let device = state.devices[index]
+        // A device being created has no UDID yet.
+        guard let udid = device.udid else { throw SimctlHouseError.deviceBusy(device: device.name, status: device.status) }
+        return udid
+    }
+
     /// All devices, or only those named by `refs` (names or UDIDs), in pool order.
     public func list(_ refs: [String] = []) throws -> [DeviceInfo] {
         let (gc, catalog) = try concurrently({ try runGarbageCollection() }, { try Catalog(backend: backend) })
