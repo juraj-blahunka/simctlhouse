@@ -263,7 +263,7 @@ public struct Pool: Sendable {
         return try info(for: name)
     }
 
-    // MARK: - create / delete / reset / list / history
+    // MARK: - create / delete / erase / list / history
 
     /// Adds a new, shut down device to the pool without leasing it.
     public func create(_ spec: DeviceSpec) throws -> DeviceInfo {
@@ -311,13 +311,13 @@ public struct Pool: Sendable {
     }
 
     /// Wipes a device back to a pristine, shut down state with `simctl erase`. Keeps the name and the UDID.
-    public func reset(_ ref: String, force: Bool) throws -> DeviceInfo {
+    public func erase(_ ref: String, force: Bool) throws -> DeviceInfo {
         try collectGarbage()
         let device = try store.transaction { state -> PoolDevice in
             guard let index = state.index(of: ref) else { throw SimctlHouseError.deviceNotFound(ref) }
             try ensureMutable(state.devices[index], force: force)
             let now = now()
-            state.devices[index].endLease(.reset, at: now)
+            state.devices[index].endLease(.erased, at: now)
             state.devices[index].transition(to: .maintenance, at: now)
             return state.devices[index]
         }
@@ -368,7 +368,7 @@ public struct Pool: Sendable {
     }
 
     /// Lease history of every device, including ones that left the pool, or of the one device matching `ref`.
-    /// `ref` may also be a name or UDID the device no longer has (after `reset`, expiry, `delete`).
+    /// `ref` may also be a name or UDID the device no longer has (after expiry or `delete`).
     public func history(_ ref: String? = nil) throws -> [DeviceHistory] {
         let catalog = try collectGarbageAndLoadCatalog()
         let state = try store.snapshot()

@@ -51,13 +51,13 @@ Measured on Xcode 27.1 / iOS 27.0 on an idle machine:
 
 Cloning a pre-booted template would skip the slow first-boot data migration.
 We chose not to: templates are extra hidden state to build, lock, repair and clean up.
-Trade-off: an `acquire` that finds no free device, and the first boot after a reclaim or `reset`, take about 25s on an idle machine and much longer under load.
+Trade-off: an `acquire` that finds no free device, and the first boot after a reclaim or `erase`, take about 25s on an idle machine and much longer under load.
 Reusing a free device, the common case, is unaffected.
 
-## D7. `reset` erases in place; expiry deletes and re-creates
+## D7. `erase` wipes in place; expiry deletes and re-creates
 
-`reset` shuts the device down and runs `simctl erase`, so it keeps its name and UDID.
-Scripts, Xcode destinations and agents that saved the UDID keep working after a reset.
+`erase` shuts the device down and runs `simctl erase`, so it keeps its name and UDID; the command is named after the `simctl` one it wraps.
+Scripts, Xcode destinations and agents that saved the UDID keep working after an erase.
 Lease expiry instead deletes the simulator and creates a new one, because only that changes the UDID, which D10 relies on.
 Both lead to the same slow first boot (about 25s), so neither is cheaper.
 (`simctl reset` is unrelated: it only rebuilds the launch services database.)
@@ -66,7 +66,7 @@ Both lead to the same slow first boot (about 25s), so neither is cheaper.
 
 A normal `release` returns the device to the pool still booted, so the next `acquire` of the same model skips the boot.
 Trade-off: state (installed apps, keychain, permissions, defaults) carries over to the next agent.
-Agents that need a clean device should `reset` it or uninstall their app explicitly.
+Agents that need a clean device should `erase` it or uninstall their app explicitly.
 
 ## D9. Leases: hard 30 minutes, extended only by `renew`
 
@@ -84,7 +84,7 @@ This is the only case where a device gets a new name; shutting a device down kee
 ## D11. Idle shutdown after 15 minutes; `gc` shuts down right away
 
 A free, booted device with no activity for 15 minutes (the default, see D21) is shut down by the GC that runs before every command.
-It is not erased; it is only cleaned on lease expiry or an explicit `reset`.
+It is not erased; it is only cleaned on lease expiry or an explicit `erase`.
 The 15 minutes keep a released device warm for the next agent.
 Measured: re-acquiring a booted device took 2.0s with no boot, booting a shut down one took 4.6s, and shutting a device down and booting it again took 8.5s.
 The explicit `gc` command skips the wait and shuts down every free booted device, for when you want the CPU and memory back now.
@@ -124,7 +124,7 @@ The real protection is D3: simctlhouse never touches simulators it did not creat
 ## D16. Leases leave an audit trail
 
 Each device keeps its last 5 leases: holder label, the PID and working directory of the process that ran `acquire` (usually the agent's shell), lease ID, UDID, acquire time, end time and outcome.
-Outcomes are `released`, `expired`, `reset`, `deleted`, `vanished`, `failed` (create or boot failed), `abandoned` (the creating process crashed) and `runtimeRemoved` (the iOS runtime was uninstalled).
+Outcomes are `released`, `expired`, `erased`, `deleted`, `vanished`, `failed` (create or boot failed), `abandoned` (the creating process crashed) and `runtimeRemoved` (the iOS runtime was uninstalled).
 A device that leaves the pool keeps its record in `retired` (the 50 most recent), so `history` still answers for a deleted, vanished or expired-and-renamed device.
 New names never reuse a retired name, so `history <name>` stays unambiguous.
 This exists because a leased device once vanished mid-test, and the only way to find out who held it was digging through agent transcripts.

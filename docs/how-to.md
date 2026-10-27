@@ -79,7 +79,7 @@ Each lease shows when it was acquired and when it ended, the `--holder` label, t
 | `active` | Still held |
 | `released` | The holder released it |
 | `expired` | Not released or renewed within the lease length; the device was erased and renamed |
-| `reset` | `reset --force` wiped it under the lease |
+| `erased` | `erase --force` wiped it under the lease |
 | `deleted` | `delete --force` removed it |
 | `vanished` | The simulator disappeared outside simctlhouse |
 | `failed` | Creating or booting it failed |
@@ -96,7 +96,7 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 | 2 | Unknown or unsupported model, or no runtime matches |
 | 3 | Device not found (never created by simctlhouse, deleted, or reclaimed after lease expiry) |
 | 4 | Lease ID mismatch, or `renew` of a device that is not leased |
-| 5 | Device is leased, busy, or used by another process (`acquire <name>`, `delete` / `reset` without `--force`) |
+| 5 | Device is leased, busy, or used by another process (`acquire <name>`, `delete` / `erase` without `--force`) |
 | 64 | Invalid command-line usage, or an invalid `SIMCTLHOUSE_*_SECONDS` value |
 
 ## Inspect and repair

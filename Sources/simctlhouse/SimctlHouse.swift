@@ -23,7 +23,7 @@ struct SimctlHouse: ParsableCommand {
               SIMCTLHOUSE_HOME           state directory (default ~/.simctlhouse)
             """,
         version: "0.1.0",
-        subcommands: [Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Reset.self, GC.self]
+        subcommands: [Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self]
     )
 }
 
@@ -295,21 +295,21 @@ struct Delete: ParsableCommand {
     }
 }
 
-struct Reset: ParsableCommand {
+struct Erase: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Erase a device back to a pristine, shut down state. Keeps its name and UDID.")
 
     @Argument(help: ArgumentHelp("The device to erase.", valueName: DeviceRef.valueName))
     var device: String
 
-    @Flag(name: .long, help: "Reset even if leased (ends the lease).")
+    @Flag(name: .long, help: "Erase even if leased (ends the lease).")
     var force = false
 
     @OptionGroup var output: OutputOptions
 
     func run() throws {
         try Runtime.run { pool in
-            let info = try pool.reset(device, force: force)
-            if output.json { try Runtime.printJSON(info) } else { Runtime.note("Reset \(info.name).") }
+            let info = try pool.erase(device, force: force)
+            if output.json { try Runtime.printJSON(info) } else { Runtime.note("Erased \(info.name).") }
         }
     }
 }

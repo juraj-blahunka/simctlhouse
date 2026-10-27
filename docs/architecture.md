@@ -54,7 +54,7 @@ The CoreSimulator state (`Booted` / `Shutdown`) is never stored; it is read live
              create ─► provisioning ─create done──────────────────► available
                                                                      │  ▲
                               idle 15 min (booted) / lease expired   │  │ shutdown or re-create done
-                              / reset / delete                       ▼  │
+                              / erase / delete                       ▼  │
                                                                   maintenance ──delete──► (gone)
 ```
 

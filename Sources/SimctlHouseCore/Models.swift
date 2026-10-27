@@ -59,7 +59,7 @@ public struct PoolDevice: Codable, Equatable, Sendable {
         case available
         /// Held by an agent until `lease.expiresAt`.
         case leased
-        /// simctlhouse is shutting down, reclaiming or resetting the device. Not acquirable.
+        /// simctlhouse is shutting down, reclaiming or erasing the device. Not acquirable.
         case maintenance
     }
 
@@ -130,8 +130,8 @@ public enum EndReason: String, Codable, Sendable {
     case released
     /// Not released or renewed in time; reclaimed.
     case expired
-    /// `reset --force` wiped the device under the lease.
-    case reset
+    /// `erase --force` wiped the device under the lease.
+    case erased
     /// `delete` removed the device.
     case deleted
     /// The simulator disappeared outside simctlhouse (Xcode, `simctl delete`, CoreSimulator).

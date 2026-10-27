@@ -47,7 +47,7 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
   An expired device is erased and handed to someone else.
   If your work may run longer, run `simctlhouse renew "$UDID"` before each long step, at the latest when two thirds of the lease have passed.
 - Released devices stay booted and are not erased.
-  If you need a pristine device, release it and run `simctlhouse reset <name>`, then acquire again; or uninstall your app first.
+  If you need a pristine device, release it and run `simctlhouse erase <name>`, then acquire again; or uninstall your app first.
 - Never `xcrun simctl shutdown/erase/delete` a device yourself, and never touch simulators simctlhouse did not give you.
 - For retry-safe scripts, use `--json` and pass the lease ID back:
 
@@ -77,6 +77,6 @@ Every command that takes a device accepts its name or its UDID.
   Use it when a device disappeared or misbehaved; old names and UDIDs still resolve.
 - `simctlhouse renew <udid>` extends your lease by a full lease length from now.
 - `simctlhouse create [--device ipad]` pre-provisions a free device.
-- `simctlhouse reset <name>` erases a free device.
+- `simctlhouse erase <name>` wipes a free device's contents and settings.
 - `simctlhouse delete <name>` deletes a device.
 - `simctlhouse gc` reclaims expired leases and shuts down every free booted device now.
