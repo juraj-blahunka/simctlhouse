@@ -38,6 +38,7 @@ simctlhouse release "$UDID"                       # back to the pool, still boot
 | `erase <name\|udid> [--force]` | Erase a device's contents and settings (keeps the name and UDID) |
 | `delete <name\|udid>... \| --all [--force]` | Delete devices |
 | `gc [--json]` | Reclaim expired leases and shut down every free booted device now |
+| `skill install\|uninstall\|status [--skills-dir DIR]...` | Link the agent skill shipped with a release into your coding agents |
 
 Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--family ipad`, on the newest installed iOS runtime that supports it.
 Devices are named with two random words, such as `amber-falcon`.
@@ -65,6 +66,9 @@ This builds a release binary and installs it to `/usr/local/bin` (or `~/.local/b
 It also links the agent skill (`skills/simctlhouse/SKILL.md`) into every coding agent it finds (Claude Code, Codex and pi), so it updates whenever you pull.
 Other agents work too: pass `--skills-dir` for any agent that loads SKILL.md skills, or add a few lines to your project's `AGENTS.md` (see the [how-to](docs/how-to.md#use-it-from-any-agent)).
 Run `./install.sh --help` for options, including `--uninstall`.
+
+A release installs the skill next to the binary instead, in `<prefix>/share/simctlhouse/skills`.
+Run `simctlhouse skill install` once to link it into your agents; upgrades of the package then update the skill too.
 
 ## Docs
 

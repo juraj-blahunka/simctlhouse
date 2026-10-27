@@ -24,7 +24,7 @@ struct SimctlHouse: ParsableCommand {
               SIMCTLHOUSE_HOME           state directory (default ~/.simctlhouse)
             """,
         version: "0.1.0",
-        subcommands: [Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self]
+        subcommands: [Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self, Skill.self]
     )
 }
 
@@ -67,8 +67,12 @@ enum Runtime {
 
     /// Runs a command body, mapping simctlhouse errors to a stderr message and a distinct exit code.
     static func run(_ body: (Pool) throws -> Void) throws {
+        try run { try body(pool()) }
+    }
+
+    static func run(_ body: () throws -> Void) throws {
         do {
-            try body(pool())
+            try body()
         } catch let error as SimctlHouseError {
             FileHandle.standardError.write(Data("error: \(error.description)\n".utf8))
             throw ExitCode(error.exitCode)
@@ -77,7 +81,7 @@ enum Runtime {
 
     static func printJSON<T: Encodable>(_ value: T) throws {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601
         print(String(decoding: try encoder.encode(value), as: UTF8.self))
     }
@@ -348,6 +352,116 @@ struct GC: ParsableCommand {
     }
 }
 
+struct Skill: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Link the agent skill into your coding agents' skills directories.",
+        discussion: """
+            The skill ships with the binary in <prefix>/share/simctlhouse/skills.
+            `skill install` links it into the skills directory of each agent set up here:
+              Claude Code  ~/.claude/skills
+              Codex        ~/.codex/skills
+              pi           ~/.pi/agent/skills ($PI_CODING_AGENT_DIR/skills)
+            or into the --skills-dir directories you name instead.
+            --source links another skill directory, such as a checkout's skills/simctlhouse (./install.sh does that).
+            The links point at the prefix, so `brew upgrade simctlhouse` updates the skill.
+            Anything else at the link location is left alone.
+            """,
+        subcommands: [Install.self, Uninstall.self, Status.self]
+    )
+
+    struct DirectoryOptions: ParsableArguments {
+        @Option(name: .long, help: "A skills directory to use instead of the detected agents' ones. Repeatable.")
+        var skillsDir: [String] = []
+
+        var directories: [URL] {
+            skillsDir.isEmpty
+                ? SkillInstaller.fromEnvironment().detectedSkillsDirectories()
+                : skillsDir.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath, isDirectory: true) }
+        }
+    }
+
+    struct Install: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Link the skill shipped with this binary, or the one at --source, into each agent.")
+
+        @Option(name: .long, help: ArgumentHelp("Link this skill directory instead, e.g. a checkout's skills/simctlhouse.", valueName: "dir"))
+        var source: String?
+
+        @OptionGroup var directories: DirectoryOptions
+        @OptionGroup var output: OutputOptions
+
+        func run() throws {
+            try Runtime.run {
+                let source = try source.map { try SkillInstaller.skill(at: NSString(string: $0).expandingTildeInPath) } ?? shippedSkill()
+                if SkillInstaller.isVersioned(source) {
+                    Runtime.note("warning: \(source.path) is versioned and goes away on the next upgrade. Run simctlhouse from $(brew --prefix)/bin instead.")
+                }
+                let links = try SkillInstaller.fromEnvironment().install(source, into: directories.directories)
+                if output.json {
+                    try Runtime.printJSON(links)
+                    return
+                }
+                if links.isEmpty { Runtime.note(Skill.noAgentsFound) }
+                for link in links { Runtime.note("Linked \(Format.path(link.path)) -> \(Format.path(link.target))") }
+            }
+        }
+
+        private func shippedSkill() throws -> URL {
+            let executable = SkillInstaller.currentExecutable()
+            guard let source = SkillInstaller.shippedSkill(executable: executable) else { throw SimctlHouseError.skillNotShipped(executable: executable.path) }
+            return source
+        }
+    }
+
+    struct Uninstall: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Remove the skill links, including broken ones left by an uninstalled package.")
+
+        @OptionGroup var directories: DirectoryOptions
+        @OptionGroup var output: OutputOptions
+
+        func run() throws {
+            try Runtime.run {
+                let before = SkillInstaller.fromEnvironment().status(in: directories.directories)
+                let links = try SkillInstaller.fromEnvironment().uninstall(from: directories.directories)
+                if output.json {
+                    try Runtime.printJSON(links)
+                    return
+                }
+                for (old, new) in zip(before, links) {
+                    switch old.status {
+                    case .linked, .broken: Runtime.note("Removed \(Format.path(new.path))")
+                    case .missing: Runtime.note("No skill link at \(Format.path(new.path))")
+                    case .foreign: Runtime.note("Left \(Format.path(new.path)) alone: not a simctlhouse skill link")
+                    }
+                }
+            }
+        }
+    }
+
+    struct Status: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show where each agent's skill link points and whether it works.")
+
+        @OptionGroup var directories: DirectoryOptions
+        @OptionGroup var output: OutputOptions
+
+        func run() throws {
+            try Runtime.run {
+                let links = SkillInstaller.fromEnvironment().status(in: directories.directories)
+                if output.json {
+                    try Runtime.printJSON(links)
+                    return
+                }
+                guard !links.isEmpty else {
+                    Runtime.note(Skill.noAgentsFound)
+                    return
+                }
+                print(Format.skillTable(links))
+            }
+        }
+    }
+
+    static let noAgentsFound = "No agent skills directory found (looked for Claude Code, Codex and pi). Pass --skills-dir for your agent."
+}
+
 // MARK: - Formatting
 
 enum Format {
@@ -395,6 +509,10 @@ enum Format {
             ]
         }
         return columns([header] + rows)
+    }
+
+    static func skillTable(_ links: [SkillLink]) -> String {
+        columns([["LINK", "STATUS", "TARGET"]] + links.map { [path($0.path), $0.status.rawValue, path($0.target)] })
     }
 
     static func historyHeader(_ history: DeviceHistory) -> String {

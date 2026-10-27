@@ -13,12 +13,31 @@ Requires Xcode with at least one iOS simulator runtime (`xcodebuild -downloadPla
 
 The script builds a release binary and installs it to `--bin-dir`.
 The default is `/usr/local/bin` when writable, otherwise `~/.local/bin`, and it warns if that directory is not on your `PATH`.
-It symlinks `skills/simctlhouse` into the skills directory of every agent set up on the machine: `~/.claude/skills` for Claude Code, `~/.codex/skills` for Codex, and `~/.pi/agent/skills` for pi (or `$PI_CODING_AGENT_DIR/skills`).
+It then runs `simctlhouse skill install --source <checkout>/skills/simctlhouse`, which symlinks the skill into the skills directory of every agent set up on the machine: `~/.claude/skills` for Claude Code, `~/.codex/skills` for Codex, and `~/.pi/agent/skills` for pi (or `$PI_CODING_AGENT_DIR/skills`).
 `--skills-dir` (repeatable) replaces that detection with the directories you name.
 Because these are links, every project picks up the skill and edits in this repo take effect immediately.
-If something other than a link into this checkout already sits at the link location, the script stops rather than delete it.
+If something other than a simctlhouse skill link already sits at a link location, nothing is linked and the script stops rather than delete it.
 Re-running it is safe and is how you upgrade after pulling.
-`--uninstall` leaves the simulator pool alone; run `simctlhouse delete --all --force` first to remove it.
+`--uninstall` removes the links with `simctlhouse skill uninstall` before it removes the binary, and leaves the simulator pool alone; run `simctlhouse delete --all --force` first to remove it.
+
+### From a release
+
+A release puts the binary in `<prefix>/bin` and the skill in `<prefix>/share/simctlhouse/skills/simctlhouse`.
+Link the skill into your agents once:
+
+```sh
+simctlhouse skill install                               # every agent found, same detection as install.sh
+simctlhouse skill install --skills-dir ~/.my-agent/skills
+simctlhouse skill status                                # where each link points: linked, missing, broken or foreign
+simctlhouse skill uninstall                             # before uninstalling the package
+```
+
+The binary finds the skill by following its own symlinks from the path it was started as, and links the first `../share/simctlhouse/skills/simctlhouse` it finds.
+For Homebrew that is `$(brew --prefix)/share/simctlhouse/...`, which `brew upgrade` re-points at the new version, so the skill updates with the binary.
+Running the binary from inside `Cellar/` links a versioned path that the next upgrade removes; the command warns about it.
+`skill install` replaces earlier simctlhouse links, including ones `./install.sh` made, and changes nothing if any link location holds something else.
+`--source DIR` links another skill directory instead of the shipped one; `./install.sh` uses it to link the checkout.
+`skill uninstall` also removes links left broken by an uninstalled package.
 
 ## Use it from any agent
 
@@ -97,6 +116,7 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 | 3 | Device not found (never created by simctlhouse, deleted, or reclaimed after lease expiry) |
 | 4 | Lease ID mismatch, or `renew` of a device that is not leased |
 | 5 | Device is leased, busy, or used by another process (`acquire <name>`, `delete` / `erase` without `--force`) |
+| 6 | `skill install` found no skill next to the binary, or something other than a simctlhouse link is in the way |
 | 64 | Invalid command-line usage, or an invalid `SIMCTLHOUSE_*_SECONDS` value |
 
 ## Inspect and repair

@@ -173,7 +173,7 @@ The skill tells agents to renew relative to the printed expiry instead of a fixe
 
 ## D22. Exit codes are API
 
-Each failure class has its own exit code (1 simctl or I/O, 2 model or runtime, 3 not found, 4 lease mismatch, 5 leased or busy, 64 usage), documented in the how-to and the skill.
+Each failure class has its own exit code (1 simctl or I/O, 2 model or runtime, 3 not found, 4 lease mismatch, 5 leased or busy, 6 skill install, 64 usage), documented in the how-to and the skill.
 Agents branch on them instead of parsing messages, so codes are never renumbered or reused; new failure classes get new codes.
 
 ## D23. Known risk: GC trusts a single device listing
@@ -198,3 +198,15 @@ Trade-off: the skill cannot use features only one agent has, and detection only 
 Every keyword must match; a device matching any search term is shown, and a term matches a substring of the name, UDID, model, `iOS <version>` or holder, case-insensitively.
 Device names always contain a hyphen and UDIDs are hex, so keywords never collide with a device.
 As in `simctl`, no match is an empty list with exit code 0; `udid` remains the exact lookup that fails with exit code 3.
+
+## D26. Releases ship the skill; `skill install` links it
+
+A release (a notarized binary, distributed through a Homebrew tap) installs the skill as data in `<prefix>/share/simctlhouse/skills/simctlhouse`.
+`simctlhouse skill install` symlinks it into each agent's skills directory, pointing at the prefix path rather than the versioned keg, so `brew upgrade` updates the skill without another install.
+The binary finds the prefix from the path it was started as (`_NSGetExecutablePath`), following symlinks one hop at a time and normalising `..` textually, because `standardizedFileURL` resolves symlinks and would land in the versioned keg.
+Homebrew cannot create the links itself: formulae must not write to `$HOME`, so the formula's caveats ask for the one-time `skill install`.
+A link counts as ours when its target is a `simctlhouse` directory whose `SKILL.md` is named `simctlhouse`, or such a path that no longer exists (Agent Skills name the directory after the skill).
+`install.sh` stays the local build path and calls `skill install --source <checkout>/skills/simctlhouse`, so skill edits take effect immediately and agent detection and link ownership live only in the binary.
+Switching between a checkout and a release just replaces the link.
+We chose `--source` over having `install.sh` mimic the release layout (`<prefix>/share` linking into the checkout): it is explicit and adds nothing to the prefix, at the cost of local installs not exercising the shipped-skill lookup.
+Trade-off: one manual step after `brew install`, and `brew uninstall` leaves broken links unless `skill uninstall` ran first; `skill status` shows them.

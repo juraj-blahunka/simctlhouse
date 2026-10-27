@@ -81,3 +81,4 @@ Every command that takes a device accepts its name or its UDID.
 - `simctlhouse erase <name>` wipes a free device's contents and settings.
 - `simctlhouse delete <name>` deletes a device.
 - `simctlhouse gc` reclaims expired leases and shuts down every free booted device now.
+- `simctlhouse skill status` shows where this skill is linked from; `skill install` and `skill uninstall` manage the links for the user.

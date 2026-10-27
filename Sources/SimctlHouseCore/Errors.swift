@@ -12,6 +12,9 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
     case deviceBusy(device: String, status: PoolDevice.Status)
     case deviceInUse(device: String)
     case invalidEnvironment(variable: String, value: String, expected: String)
+    case skillNotShipped(executable: String)
+    case skillConflict(paths: [String])
+    case notASkill(String)
     case corruptState(String)
     case io(String)
 
@@ -23,6 +26,7 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
         case .deviceNotFound: 3
         case .leaseMismatch, .notLeased: 4
         case .deviceLeased, .deviceBusy, .deviceInUse: 5
+        case .skillNotShipped, .skillConflict, .notASkill: 6
         case .corruptState, .io: 1
         case .invalidEnvironment: 64
         }
@@ -56,6 +60,13 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
             "\(device) is free, but another process is using it (its UDID appears in a running command). Pick another device."
         case .invalidEnvironment(let variable, let value, let expected):
             "\(variable)='\(value)' is invalid; expected \(expected)."
+        case .skillNotShipped(let executable):
+            "No skill ships with \(executable): <prefix>/share/simctlhouse/skills/simctlhouse is missing. "
+                + "Install a release (e.g. with Homebrew), or pass --source with a checkout's skills/simctlhouse."
+        case .skillConflict(let paths):
+            "Not a simctlhouse skill link, left untouched: \(paths.joined(separator: ", ")). Remove it or pass --skills-dir."
+        case .notASkill(let path):
+            "\(path) is not the simctlhouse skill: expected a simctlhouse directory with a SKILL.md named simctlhouse."
         case .corruptState(let detail):
             "State file is unreadable: \(detail)"
         case .io(let detail):
