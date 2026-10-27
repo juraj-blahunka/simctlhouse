@@ -71,3 +71,7 @@ Run `./install.sh --help` for options, including `--uninstall`.
 - [How-to](docs/how-to.md): usage recipes, exit codes, testing, repair
 - [Architecture](docs/architecture.md): state, locking, lifecycle, GC
 - [Decisions](docs/decisions.md): what we chose and why
+
+## License
+
+MIT, see [LICENSE](LICENSE).
