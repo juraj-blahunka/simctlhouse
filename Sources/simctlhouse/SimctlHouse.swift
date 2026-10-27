@@ -31,7 +31,7 @@ struct SimctlHouse: ParsableCommand {
 
 struct SpecOptions: ParsableArguments {
     @Option(name: .long, help: "Device family: iphone or ipad. Default: iphone.")
-    var device: DeviceSpec.Family?
+    var family: DeviceSpec.Family?
 
     @Option(name: .long, help: "Exact model name or device type identifier, e.g. \"iPhone 17 Pro\". Default: latest iPhone Pro / iPad Pro 11-inch.")
     var model: String?
@@ -39,8 +39,8 @@ struct SpecOptions: ParsableArguments {
     @Option(name: .long, help: "iOS version, e.g. 26 or 26.5. Default: latest installed runtime supporting the model.")
     var os: String?
 
-    var spec: DeviceSpec { DeviceSpec(family: device, model: model, os: os) }
-    var isEmpty: Bool { device == nil && model == nil && os == nil }
+    var spec: DeviceSpec { DeviceSpec(family: family, model: model, os: os) }
+    var isEmpty: Bool { family == nil && model == nil && os == nil }
 }
 
 extension DeviceSpec.Family: ExpressibleByArgument {}
@@ -107,7 +107,7 @@ struct Acquire: ParsableCommand {
     var holder: String?
 
     func validate() throws {
-        if device != nil && !spec.isEmpty { throw ValidationError("Pass a device name/UDID or --device/--model/--os, not both.") }
+        if device != nil && !spec.isEmpty { throw ValidationError("Pass a device name/UDID or --family/--model/--os, not both.") }
     }
 
     func run() throws {

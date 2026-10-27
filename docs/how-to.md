@@ -51,7 +51,7 @@ simctlhouse release "$UDID"
 Use `--json` to also get the lease ID, and pass it to `release` / `renew` for retry-safe scripts:
 
 ```sh
-LEASE=$(simctlhouse acquire --device ipad --os 26 --json)
+LEASE=$(simctlhouse acquire --family ipad --os 26 --json)
 UDID=$(echo "$LEASE" | jq -r .udid)
 LEASE_ID=$(echo "$LEASE" | jq -r .leaseId)
 simctlhouse renew "$UDID" --lease-id "$LEASE_ID"    # before the lease runs out (30 minutes by default)
@@ -147,7 +147,7 @@ The idle timeout is applied by whichever invocation runs garbage collection, so 
 ## Pick a specific model or OS
 
 ```sh
-simctlhouse acquire --device ipad                        # latest iPad Pro 11-inch, latest OS
+simctlhouse acquire --family ipad                        # latest iPad Pro 11-inch, latest OS
 simctlhouse acquire --model "iPhone 17 Pro" --os 26.5
 simctlhouse acquire --model com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB
 ```

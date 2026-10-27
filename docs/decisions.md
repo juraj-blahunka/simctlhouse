@@ -115,7 +115,8 @@ The real protection is D3: simctlhouse never touches simulators it did not creat
 
 ## D15. Default device resolution
 
-- Default family is iPhone.
+- Default family is iPhone, chosen with `--family iphone|ipad`.
+  The option is not called `--device` because in `simctl` a device is one specific simulator, which is what `<name|udid>` arguments name.
 - Default iPhone is the newest `iPhone N Pro`, ordered by hardware model identifier (`iPhone19,2` > `iPhone18,1`).
 - Default iPad is the newest base-memory `iPad Pro 11-inch`; memory variants like `(16GB)` are skipped.
 - Only device types that some installed runtime supports are considered.

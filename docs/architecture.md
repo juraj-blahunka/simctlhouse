@@ -94,7 +94,7 @@ The shutdowns and reclaims touch different simulators, so they run in parallel a
 
 1. Run GC.
 2. With `acquire <name|udid>`, lease that device if it is free and no foreign process references it; otherwise fail with exit code 3 or 5.
-3. Otherwise resolve `--device` / `--model` / `--os` to a device type and runtime (`Catalog`), and under the lock pick an `available` device of exactly that type and runtime whose simulator exists and no foreign process references.
+3. Otherwise resolve `--family` / `--model` / `--os` to a device type and runtime (`Catalog`), and under the lock pick an `available` device of exactly that type and runtime whose simulator exists and no foreign process references.
    Prefer a booted one, then the most recently used.
 4. If none matched, reserve a fresh name as `provisioning` with the lease attached, then `simctl create` it outside the lock.
 5. `simctl bootstatus <udid> -b` boots the device and waits until boot has fully completed.

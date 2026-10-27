@@ -17,7 +17,7 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
    UDID=$(simctlhouse acquire --holder "<short task label>")
    ```
 
-   Options: `--device ipad` (default `iphone`), `--model "iPhone 17 Pro"` (exact name from `xcrun simctl list devicetypes`), `--os 26` or `--os 26.5`.
+   Options: `--family ipad` (default `iphone`), `--model "iPhone 17 Pro"` (exact name from `xcrun simctl list devicetypes`), `--os 26` or `--os 26.5`.
    Defaults are the latest iPhone Pro or iPad Pro 11-inch on the newest installed iOS.
    The device is booted and ready when the command returns.
    Reusing a free device is quick; when the pool has none, creating and first-booting a new one takes about 30s.
@@ -76,7 +76,7 @@ Every command that takes a device accepts its name or its UDID.
 - `simctlhouse history [<name|udid>]` shows who held a device, when, and how each lease ended (released, expired, vanished, ...).
   Use it when a device disappeared or misbehaved; old names and UDIDs still resolve.
 - `simctlhouse renew <udid>` extends your lease by a full lease length from now.
-- `simctlhouse create [--device ipad]` pre-provisions a free device.
+- `simctlhouse create [--family ipad]` pre-provisions a free device.
 - `simctlhouse erase <name>` wipes a free device's contents and settings.
 - `simctlhouse delete <name>` deletes a device.
 - `simctlhouse gc` reclaims expired leases and shuts down every free booted device now.

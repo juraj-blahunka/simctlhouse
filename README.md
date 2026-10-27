@@ -27,19 +27,19 @@ simctlhouse release "$UDID"                       # back to the pool, still boot
 
 | Command | Purpose |
 | --- | --- |
-| `acquire [--device iphone\|ipad] [--model NAME] [--os VERSION] [--holder LABEL] [--json]` | Lease a free matching device or create one, boot it, print the UDID |
+| `acquire [--family iphone\|ipad] [--model NAME] [--os VERSION] [--holder LABEL] [--json]` | Lease a free matching device or create one, boot it, print the UDID |
 | `acquire <name\|udid> [--holder LABEL] [--json]` | Lease that specific free device |
 | `release <name\|udid> [--lease-id ID]` | Return a device to the pool |
 | `renew <name\|udid> [--lease-id ID]` | Extend a lease by a full lease length from now |
 | `list [<name\|udid>...] [--json]` | Show all simctlhouse devices, or only the given ones |
 | `udid <name\|udid>` | Print a device's UDID |
 | `history [<name\|udid>] [--json]` | Show who held devices, when, and how each lease ended |
-| `create [--device] [--model] [--os]` | Add a free device to the pool ahead of time |
+| `create [--family] [--model] [--os]` | Add a free device to the pool ahead of time |
 | `erase <name\|udid> [--force]` | Erase a device's contents and settings (keeps the name and UDID) |
 | `delete <name\|udid>... \| --all [--force]` | Delete devices |
 | `gc [--json]` | Reclaim expired leases and shut down every free booted device now |
 
-Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--device ipad`, on the newest installed iOS runtime that supports it.
+Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--family ipad`, on the newest installed iOS runtime that supports it.
 Devices are named with two random words, such as `amber-falcon`.
 Every command that takes a device accepts its name or its UDID.
 
