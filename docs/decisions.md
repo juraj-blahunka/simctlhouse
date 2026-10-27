@@ -7,12 +7,12 @@ Newest decisions go at the bottom.
 
 Agents take a device with `acquire` and give it back with `release`.
 These are standard concurrency terms, so agents use them correctly without extra explanation.
-Alternatives considered: `lease`/`return`, `checkout`/`checkin` (reads backwards with the "house" theme), `borrow`/`return`.
+Alternatives considered: `lease`/`return`, `checkout`/`checkin`, `borrow`/`return`.
 `renew` extends a lease.
 
 ## D2. Pool devices live in the default CoreSimulator device set
 
-`simctl --set <path>` would hide our devices from the user entirely, which was the first idea.
+`simctl --set <path>` would hide our devices from the user entirely.
 We verified that `xcodebuild -showdestinations` and `-destination id=<UDID>` cannot see devices in a custom set, so pool devices must live in the default set and are visible in Xcode's destination picker.
 
 ## D3. Ownership is the registry, names are bare words
@@ -33,8 +33,8 @@ Words that read like pool states (`busy`, `free`, `idle`) are excluded to avoid 
 State lives in `~/.simctlhouse/state.json`.
 Every mutation takes an exclusive `flock` on `state.lock`, reads, modifies, and writes through a temp file plus atomic rename.
 The kernel releases `flock` when a process dies, so a crashed agent never wedges the pool.
-The lock is held for milliseconds; slow work (create, boot, shutdown) happens outside it, protected by the `provisioning` and `maintenance` statuses.
-SQLite was rejected as more machinery than ~50 rows need, and harder to inspect or repair by hand.
+The lock is held for milliseconds; slow work (create, boot, shutdown, delete) happens outside it, protected by the `provisioning` and `maintenance` statuses.
+SQLite was rejected as more machinery than a few hundred records need (devices plus their lease history, D16), and harder to inspect or repair by hand.
 Per-device lock files were rejected because the CLI exits after `acquire`, so a process-held lock cannot represent a lease.
 
 ## D6. New devices come from `simctl create`
@@ -50,7 +50,7 @@ Measured on Xcode 27.1 / iOS 27.0 on an idle machine:
 | First boot of that clone | 2.2s |
 
 Cloning a pre-booted template would skip the slow first-boot data migration.
-We chose not to: templates are extra hidden state to build, lock, repair and clean up, and cloning across device sets is a less trodden CoreSimulator path.
+We chose not to: templates are extra hidden state to build, lock, repair and clean up.
 Trade-off: an `acquire` that finds no free device, and the first boot after a reclaim or `reset`, take about 25s on an idle machine and much longer under load.
 Reusing a free device, the common case, is unaffected.
 
@@ -61,7 +61,7 @@ Both lead to the same slow first boot, but only delete and create changes the UD
 
 ## D8. Release keeps the device booted and does not erase it
 
-A normal `release` returns the device to the pool still booted, so the next `acquire` of the same model is instant.
+A normal `release` returns the device to the pool still booted, so the next `acquire` of the same model skips the boot.
 Trade-off: state (installed apps, keychain, permissions, defaults) carries over to the next agent.
 Agents that need a clean device should `reset` it or uninstall their app explicitly.
 
@@ -76,18 +76,21 @@ Trade-off: an agent running a long suite must call `renew`, or its device is rec
 When a lease expires, the device is reclaimed: shut down, deleted and created again (erased), and returned to the pool as available under a new name.
 Both the old name and the old UDID disappear, so a stale agent that comes back fails loudly with exit code 3.
 It never silently releases or drives a device that has since been handed to someone else.
+This is the only case where a device gets a new name; shutting a device down keeps its name and UDID.
 
-## D11. Idle shutdown after 15 minutes, no erase; `gc` shuts down right away
+## D11. Idle shutdown after 15 minutes; `gc` shuts down right away
 
 A free, booted device with no activity for 15 minutes is shut down by the GC that runs before every command.
 It is not erased; it is only cleaned on lease expiry or an explicit `reset`.
-The 15 minutes keep a released device warm for the next agent: reusing a booted device is instant, while booting a shut down one took 4.6s in our measurement, and an `acquire` that first had to shut it down took 8.5s.
+The 15 minutes keep a released device warm for the next agent.
+Measured: re-acquiring a booted device took 2.0s with no boot, booting a shut down one took 4.6s, and shutting a device down and booting it again took 8.5s.
 The explicit `gc` command skips the wait and shuts down every free booted device, for when you want the CPU and memory back now.
 Both spare devices a foreign process references (D14).
 
 ## D12. Lazy garbage collection, no daemon
 
-Lease expiry and idle shutdown are enforced at the start of every command (`gc` runs them explicitly).
+Lease expiry and idle shutdown are enforced at the start of every command.
+The `gc` command runs the same collection on demand, and also shuts down free devices before their idle timeout (D11).
 There is no daemon or launchd agent.
 Trade-off: if nothing runs simctlhouse, expired leases and idle devices are only handled on the next invocation.
 
@@ -95,13 +98,15 @@ Trade-off: if nothing runs simctlhouse, expired leases and idle devices are only
 
 Every `acquire` gets its own device; there is no limit on concurrently booted devices.
 This fixes the shared-device conflicts, but not CPU and RAM contention when many agents run at once.
-During end-to-end testing, nine booted simulators on one machine each burned close to a full core right after boot.
+A freshly booted simulator uses close to a full core, and during end-to-end testing on a machine shared with other agents' builds the load average passed 500.
 Revisit with a cap plus wait if contention shows up again.
 
 ## D14. Detecting the user's own use is best effort
 
-A free device is skipped by `acquire`, and spared by idle shutdown, when another process's command line mentions its UDID (for example `xcodebuild -destination id=<UDID>` or `xcrun simctl install <UDID>`).
-The simulator's own processes and simctlhouse invocations are ignored.
+A free device counts as in use when another process's command line mentions its UDID (for example `xcodebuild -destination id=<UDID>` or `xcrun simctl install <UDID>`).
+Such a device is skipped by `acquire`, refused by `acquire <name|udid>` with exit code 5, and spared by idle shutdown and `gc`.
+The simulator's own processes and simctlhouse's own invocations are ignored; the latter are recognised by the executable name, so other tools with "simctlhouse" in a path still count.
+An executable path containing a space is not recognised as simctlhouse, which only makes it more cautious.
 Use from inside the Xcode IDE or Simulator.app does not show up in process arguments and cannot be detected.
 The real protection is D3: simctlhouse never touches simulators it did not create.
 
@@ -115,10 +120,12 @@ The real protection is D3: simctlhouse never touches simulators it did not creat
 
 ## D16. Leases leave an audit trail
 
-Each device keeps its last 5 leases: holder label, PID and working directory of `acquire`, lease ID, UDID, acquire time, end time and outcome (`released`, `expired`, `reset`, `deleted`, `vanished`, `failed`).
+Each device keeps its last 5 leases: holder label, the PID and working directory of the process that ran `acquire` (usually the agent's shell), lease ID, UDID, acquire time, end time and outcome.
+Outcomes are `released`, `expired`, `reset`, `deleted`, `vanished`, `failed` (create or boot failed), `abandoned` (the creating process crashed) and `runtimeRemoved` (the iOS runtime was uninstalled).
 A device that leaves the pool keeps its record in `retired` (the 50 most recent), so `history` still answers for a deleted, vanished or expired-and-renamed device.
 New names never reuse a retired name, so `history <name>` stays unambiguous.
 This exists because a leased device once vanished mid-test, and the only way to find out who held it was digging through agent transcripts.
+The underlying cause is not fixed (D23).
 Trade-off: `state.json` grows to a bounded few hundred records.
 
 ## D17. Every command accepts a name or a UDID
@@ -135,3 +142,34 @@ A command needs the live device list (for GC and for display) and the device typ
 These are independent, so they run at the same time, and `list` reuses GC's device snapshot when GC changed nothing.
 GC's shutdowns and reclaims each touch a different simulator, so they run in parallel too.
 `list` on an idle machine went from about 0.8s (four sequential calls) to about 0.25s.
+
+## D19. iPhone and iPad only
+
+simctlhouse manages iPhone and iPad simulators only.
+`--model` with a watchOS, tvOS or visionOS device type fails with exit code 2.
+The agents this serves build and test iOS apps; other platforms bring their own runtimes, pairing rules and defaults, which nobody has asked for.
+
+## D20. Release and renew trust the caller
+
+Any process can `release` or `renew` a device by name or UDID; the lease ID is optional.
+Agents run as the same user and cooperate, so requiring the lease ID would mostly add a way for well-behaved agents to fail.
+Scripts that want protection against releasing someone else's device pass `--lease-id`, which fails with exit code 4 on a mismatch.
+Trade-off: a confused agent can release a device another agent holds; `history` shows who held it.
+
+## D21. Timeouts are fixed
+
+The 30-minute lease and the 15-minute idle shutdown have no setting.
+Fixed values keep every agent's expectations the same and keep the skill's instructions (renew at least every 20 minutes) true.
+`SIMCTLHOUSE_LEASE_SECONDS` and `SIMCTLHOUSE_IDLE_SECONDS` exist only so end-to-end tests do not wait half an hour.
+
+## D22. Exit codes are API
+
+Each failure class has its own exit code (1 simctl or I/O, 2 model or runtime, 3 not found, 4 lease mismatch, 5 leased or busy, 64 usage), documented in the how-to and the skill.
+Agents branch on them instead of parsing messages, so codes are never renumbered or reused; new failure classes get new codes.
+
+## D23. Known risk: GC trusts a single device listing
+
+GC retires a device as `vanished` the first time one `simctl list devices` call does not include it.
+If CoreSimulator briefly returns an incomplete list, for example while its service restarts, a live device would be dropped from the registry and never managed again.
+This is the likely cause of the vanished device in D16, which disappeared during a window where every `simctl` call reported no runtimes.
+Not fixed yet: a fix (skip the run when `simctl` reports no runtimes, and require the device directory to be gone too) should first be reproduced end to end.
