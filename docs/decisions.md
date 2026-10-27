@@ -220,6 +220,7 @@ The binary is arm64 only: Xcode has deprecated x86_64, and the formula says `dep
 `scripts/build.sh` is the only way the binary is built, for `scripts/install.sh` and `scripts/release.sh` alike, so a local install runs the bytes a release ships (only the signing timestamp differs).
 It strips the debug symbol table, which holds absolute build paths and would publish the builder's home directory, signs with the hardened runtime, and checks the minimum macOS against `Package.swift`, from which the formula's `depends_on macos:` is derived.
 After notarization the script asks Apple's ticket service whether a ticket is published for the binary's code hash, the lookup users' Macs make; `spctl` cannot be used, because asked before the ticket is published it caches "Unnotarized" for that hash.
+Before publishing, `scripts/smoke-test.sh` runs the tarball against real simulators.
 The version stays hardcoded in `SimctlHouse.swift`; `scripts/release.sh` refuses to build when it differs from the release version, which avoids generated sources and keeps `swift build` from any checkout meaningful.
 The script verifies its own output by installing the tarball into a temporary directory and running `skill install` from it.
 Trade-off: a bare binary cannot be stapled, so Gatekeeper checks notarization online on first run; Homebrew does not quarantine formula downloads, so this only matters for manual downloads.

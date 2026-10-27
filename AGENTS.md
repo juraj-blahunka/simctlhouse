@@ -14,6 +14,7 @@ swift format lint -r Sources Tests  # must be clean; `swift format format -i -r 
 scripts/install.sh                  # build release + install binary + link skill into detected agents (see --help)
 scripts/build.sh OUTPUT             # the release binary: arm64, stripped, signed (install.sh and release.sh use it)
 scripts/release.sh <version>        # signed, notarized release tarball + Homebrew formula in dist/ (see --help)
+scripts/smoke-test.sh TARBALL       # run a release tarball against real simulators in a throwaway home
 ```
 
 ## Layout

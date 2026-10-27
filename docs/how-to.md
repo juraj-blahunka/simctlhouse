@@ -195,8 +195,9 @@ For each release:
 2. Run `scripts/release.sh 1.4.0`.
    It refuses to run if the version does not match, if the sources have uncommitted changes, or if tag `v1.4.0` exists elsewhere.
    It runs the tests and lint, builds and signs through `scripts/build.sh`, notarizes, checks that Apple published the notarization ticket, packs `dist/simctlhouse-1.4.0-macos.tar.gz`, installs that tarball into a temporary directory to check it, and writes `dist/simctlhouse.rb`.
-3. Tag the commit `v1.4.0`, push it, and attach the tarball to a GitHub release of that tag.
-4. Copy `dist/simctlhouse.rb` to `Formula/simctlhouse.rb` in the tap and push.
+3. Run `scripts/smoke-test.sh dist/simctlhouse-1.4.0-macos.tar.gz`: the shipped binary acquires, releases and deletes a real simulator in a throwaway home, and the script checks that no other simulator was touched.
+4. Tag the commit `v1.4.0`, push it, and attach the tarball to a GitHub release of that tag.
+5. Copy `dist/simctlhouse.rb` to `Formula/simctlhouse.rb` in the tap and push.
 
 `--skip-notarize` and `--allow-dirty` let you try the script without credentials or a commit; never publish such a build.
 The tarball is laid out like an install prefix (`bin/`, `share/simctlhouse/skills/simctlhouse`, `LICENSE`), so it also works unpacked into any prefix by hand.
