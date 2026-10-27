@@ -2,7 +2,6 @@
 
 Device Hub for Agents: a Swift CLI that leases iOS simulators to parallel agents from a shared pool.
 Read `docs/architecture.md` before changing `Pool.swift`, and `docs/decisions.md` before changing behaviour.
-This file is the instructions for every coding agent; `CLAUDE.md` is a symlink to it, so edit this one.
 
 ## Commands
 
@@ -24,10 +23,9 @@ scripts/smoke-test.sh TARBALL       # run a release tarball against real simulat
 - `Sources/SimctlHouseCore/`: all behaviour.
   `Pool` is the entry point; `SimulatorBackend` and `ProcessScanner` are the seams for tests.
 - `Tests/SimctlHouseCoreTests/Fakes.swift`: `FakeBackend`, `FakeScanner`, `TestClock`, `Harness`.
-- `skills/simctlhouse/SKILL.md`: the agent skill, in the Agent Skills (SKILL.md) format that Claude Code, Codex, pi and other agents load.
+- `skills/simctlhouse/SKILL.md`: the agent skill.
   Update it whenever CLI behaviour or flags change, and keep it free of agent-specific instructions.
 - `.agents/skills/release/SKILL.md`: the maintainer skill that publishes a release (tag, GitHub release, Homebrew tap).
-  `.claude/skills/release` is a symlink to it, like `CLAUDE.md` is to this file.
 - `docs/`: decisions, architecture, how-tos.
 
 ## Invariants
