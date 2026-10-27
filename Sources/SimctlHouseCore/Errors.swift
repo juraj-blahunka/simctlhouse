@@ -11,6 +11,7 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
     case deviceLeased(device: String, holder: String?)
     case deviceBusy(device: String, status: PoolDevice.Status)
     case deviceInUse(device: String)
+    case invalidEnvironment(variable: String, value: String, expected: String)
     case corruptState(String)
     case io(String)
 
@@ -23,6 +24,7 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
         case .leaseMismatch, .notLeased: 4
         case .deviceLeased, .deviceBusy, .deviceInUse: 5
         case .corruptState, .io: 1
+        case .invalidEnvironment: 64
         }
     }
 
@@ -52,6 +54,8 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
             "\(device) is busy (\(status.rawValue)). Try again shortly."
         case .deviceInUse(let device):
             "\(device) is free, but another process is using it (its UDID appears in a running command). Pick another device."
+        case .invalidEnvironment(let variable, let value, let expected):
+            "\(variable)='\(value)' is invalid; expected \(expected)."
         case .corruptState(let detail):
             "State file is unreadable: \(detail)"
         case .io(let detail):

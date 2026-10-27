@@ -11,9 +11,16 @@ struct SimctlHouse: ParsableCommand {
             Each agent acquires its own simulator, uses it via its UDID, and releases it when done.
             Leases expire after 30 minutes (extend with `renew`); expired devices are erased and returned to the pool.
             Free devices shut down after 15 minutes of inactivity. simctlhouse only touches devices it created.
+            Both timeouts can be changed with environment variables, see below; an idle time of 0 shuts free devices down on the next command.
             Wherever a command takes a device, its name and its UDID both work.
 
             Machine-readable output goes to stdout, human messages to stderr.
+
+            Environment:
+              SIMCTLHOUSE_LEASE_SECONDS  lease length in seconds (default 1800)
+              SIMCTLHOUSE_IDLE_SECONDS   idle seconds before shutdown (default 900)
+              SIMCTLHOUSE_HOLDER         default --holder label
+              SIMCTLHOUSE_HOME           state directory (default ~/.simctlhouse)
             """,
         version: "0.1.0",
         subcommands: [Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Reset.self, GC.self]
@@ -49,10 +56,10 @@ enum DeviceRef {
 }
 
 enum Runtime {
-    static func pool() -> Pool {
+    static func pool() throws -> Pool {
         Pool(
             paths: HousePaths.fromEnvironment(),
-            config: PoolConfig.fromEnvironment(),
+            config: try PoolConfig.fromEnvironment(),
             log: { message in FileHandle.standardError.write(Data((message + "\n").utf8)) }
         )
     }
@@ -143,7 +150,7 @@ struct Release: ParsableCommand {
 }
 
 struct Renew: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Extend a lease by another 30 minutes from now.")
+    static let configuration = CommandConfiguration(abstract: "Extend a lease by another full lease length (default 30 minutes) from now.")
 
     @Argument(help: ArgumentHelp("The leased device.", valueName: DeviceRef.valueName))
     var device: String
@@ -312,7 +319,7 @@ struct GC: ParsableCommand {
         commandName: "gc",
         abstract: "Reclaim expired leases and shut down every free booted device now.",
         discussion: """
-            Every command already reclaims expired leases and shuts down devices idle for 15 minutes first.
+            Every command already reclaims expired leases and shuts down devices idle for 15 minutes ($SIMCTLHOUSE_IDLE_SECONDS) first.
             `gc` also shuts down free devices that have not been idle that long, for example to free CPU and memory.
             Devices another process is using are left running.
             """

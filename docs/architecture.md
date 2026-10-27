@@ -119,4 +119,4 @@ Independent calls run in parallel (`concurrently`): GC's device listing overlaps
 
 `Pool` takes a `SimulatorBackend`, a `ProcessScanner`, a clock and a logger.
 Unit tests use `FakeBackend` (an in-memory CoreSimulator) and `TestClock` to cover expiry, idle shutdown, crash recovery and concurrent acquires without real simulators.
-`SIMCTLHOUSE_HOME`, `SIMCTLHOUSE_LEASE_SECONDS` and `SIMCTLHOUSE_IDLE_SECONDS` let end-to-end runs use real simulators in an isolated home with short timeouts.
+`SIMCTLHOUSE_HOME`, `SIMCTLHOUSE_LEASE_SECONDS` and `SIMCTLHOUSE_IDLE_SECONDS` (see D21) let end-to-end runs use real simulators in an isolated home with short timeouts.

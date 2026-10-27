@@ -31,7 +31,7 @@ Use `--json` to also get the lease ID, and pass it to `release` / `renew` for re
 LEASE=$(simctlhouse acquire --device ipad --os 26 --json)
 UDID=$(echo "$LEASE" | jq -r .udid)
 LEASE_ID=$(echo "$LEASE" | jq -r .leaseId)
-simctlhouse renew "$UDID" --lease-id "$LEASE_ID"    # before 30 minutes pass
+simctlhouse renew "$UDID" --lease-id "$LEASE_ID"    # before the lease runs out (30 minutes by default)
 simctlhouse release "$UDID" --lease-id "$LEASE_ID"
 ```
 
@@ -55,7 +55,7 @@ Each lease shows when it was acquired and when it ended, the `--holder` label, t
 | --- | --- |
 | `active` | Still held |
 | `released` | The holder released it |
-| `expired` | Not released or renewed within 30 minutes; the device was erased and renamed |
+| `expired` | Not released or renewed within the lease length; the device was erased and renamed |
 | `reset` | `reset --force` wiped it under the lease |
 | `deleted` | `delete --force` removed it |
 | `vanished` | The simulator disappeared outside simctlhouse |
@@ -74,7 +74,7 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 | 3 | Device not found (never created by simctlhouse, deleted, or reclaimed after lease expiry) |
 | 4 | Lease ID mismatch, or `renew` of a device that is not leased |
 | 5 | Device is leased, busy, or used by another process (`acquire <name>`, `delete` / `reset` without `--force`) |
-| 64 | Invalid command-line usage |
+| 64 | Invalid command-line usage, or an invalid `SIMCTLHOUSE_*_SECONDS` value |
 
 ## Inspect and repair
 
@@ -105,6 +105,21 @@ $B acquire "$U" >/dev/null && $B release "$U" && $B gc --json   # gc shuts down 
 $B history                                         # e2e released, short expired
 $B delete --all --force
 ```
+
+## Change the timeouts
+
+```sh
+export SIMCTLHOUSE_LEASE_SECONDS=3600   # 1 hour leases, for long UI suites
+export SIMCTLHOUSE_IDLE_SECONDS=0       # shut free devices down on the next command
+```
+
+Values are whole or fractional seconds.
+The lease must be more than 0; the idle time may be 0.
+A malformed value makes every command fail with exit code 64 instead of falling back to the default.
+
+Each invocation reads its own environment.
+The lease length is fixed into each lease when it is acquired or renewed, so agents with different values never disagree about an existing lease.
+The idle timeout is applied by whichever invocation runs garbage collection, so give every agent the same value.
 
 ## Pick a specific model or OS
 

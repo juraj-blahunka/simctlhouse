@@ -130,9 +130,11 @@ struct Harness {
         root = FileManager.default.temporaryDirectory.appending(path: "simctlhouse-tests-\(UUID().uuidString)")
     }
 
-    var pool: Pool {
+    var pool: Pool { pool(config: PoolConfig()) }
+
+    func pool(config: PoolConfig) -> Pool {
         let clock = clock
-        return Pool(paths: HousePaths(root: root), backend: backend, scanner: scanner, now: { clock.now })
+        return Pool(paths: HousePaths(root: root), backend: backend, scanner: scanner, config: config, now: { clock.now })
     }
 
     func state() throws -> PoolState { try StateStore(paths: HousePaths(root: root)).snapshot() }

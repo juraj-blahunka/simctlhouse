@@ -139,6 +139,16 @@ import Testing
         #expect(h.backend.device(device.udid)?.state == "Shutdown")
     }
 
+    @Test func configuredTimeoutsApply() throws {
+        let config = try PoolConfig.fromEnvironment(["SIMCTLHOUSE_LEASE_SECONDS": "120", "SIMCTLHOUSE_IDLE_SECONDS": "0"])
+        let pool = h.pool(config: config)
+        let device = try pool.acquire(AcquireRequest())
+        #expect(device.expiresAt == h.clock.now.addingTimeInterval(120))
+        try pool.release(device.name)
+        // An idle timeout of 0 shuts a released device down on the very next command.
+        #expect(try pool.collectGarbage().shutDown == [device.name])
+    }
+
     @Test func idleShutdownSparesDevicesInForeignUse() throws {
         let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         try h.pool.release(device.name)

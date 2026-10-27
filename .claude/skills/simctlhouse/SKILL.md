@@ -42,9 +42,10 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
 - Always pass `--holder` with a label that says who you are and what you are doing; `simctlhouse history` shows it to whoever investigates later.
 - One lease per task.
   Reuse your UDID for every build and test in the task; do not acquire again for each command.
-- Leases expire 30 minutes after acquire or the last renew.
+- Leases expire a fixed time after acquire or the last renew: 30 minutes by default, or `$SIMCTLHOUSE_LEASE_SECONDS`.
+  `acquire` and `renew` print how long you have (`expiresAt` in `--json`).
   An expired device is erased and handed to someone else.
-  If your work may run longer, run `simctlhouse renew "$UDID"` before each long step, at least every 20 minutes.
+  If your work may run longer, run `simctlhouse renew "$UDID"` before each long step, at the latest when two thirds of the lease have passed.
 - Released devices stay booted and are not erased.
   If you need a pristine device, release it and run `simctlhouse reset <name>`, then acquire again; or uninstall your app first.
 - Never `xcrun simctl shutdown/erase/delete` a device yourself, and never touch simulators simctlhouse did not give you.
@@ -74,7 +75,7 @@ Every command that takes a device accepts its name or its UDID.
 - `simctlhouse udid <name>` prints the UDID of a device you know by name.
 - `simctlhouse history [<name|udid>]` shows who held a device, when, and how each lease ended (released, expired, vanished, ...).
   Use it when a device disappeared or misbehaved; old names and UDIDs still resolve.
-- `simctlhouse renew <udid>` extends your lease by 30 minutes from now.
+- `simctlhouse renew <udid>` extends your lease by a full lease length from now.
 - `simctlhouse create [--device ipad]` pre-provisions a free device.
 - `simctlhouse reset <name>` erases a free device.
 - `simctlhouse delete <name>` deletes a device.

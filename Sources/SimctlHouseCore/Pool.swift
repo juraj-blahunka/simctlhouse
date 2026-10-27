@@ -1,21 +1,34 @@
 import Foundation
 
 public struct PoolConfig: Sendable {
+    public static let leaseVariable = "SIMCTLHOUSE_LEASE_SECONDS"
+    public static let idleVariable = "SIMCTLHOUSE_IDLE_SECONDS"
+
     /// A lease not released or renewed within this window is forcefully reclaimed.
     public var leaseDuration: TimeInterval = 30 * 60
-    /// Free booted devices are shut down after this much inactivity. The `gc` command shuts them down regardless.
+    /// Free booted devices are shut down after this much inactivity; 0 shuts them down on the next command.
+    /// The `gc` command shuts them down regardless.
     public var idleShutdown: TimeInterval = 15 * 60
     /// `provisioning` / `maintenance` records older than this were abandoned by a crashed process.
     public var staleOperation: TimeInterval = 10 * 60
 
     public init() {}
 
-    /// Timeouts are fixed by design; the overrides exist so end-to-end tests do not have to wait 30 minutes.
-    public static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> PoolConfig {
+    /// Reads the timeouts from the environment. A malformed value is an error rather than silently ignored,
+    /// so a typo cannot quietly leave an agent with a lease of the wrong length.
+    public static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) throws -> PoolConfig {
         var config = PoolConfig()
-        if let value = environment["SIMCTLHOUSE_LEASE_SECONDS"].flatMap(TimeInterval.init) { config.leaseDuration = value }
-        if let value = environment["SIMCTLHOUSE_IDLE_SECONDS"].flatMap(TimeInterval.init) { config.idleShutdown = value }
+        if let value = try seconds(environment, leaseVariable, allowZero: false) { config.leaseDuration = value }
+        if let value = try seconds(environment, idleVariable, allowZero: true) { config.idleShutdown = value }
         return config
+    }
+
+    private static func seconds(_ environment: [String: String], _ variable: String, allowZero: Bool) throws -> TimeInterval? {
+        guard let raw = environment[variable], !raw.isEmpty else { return nil }
+        guard let value = TimeInterval(raw.trimmingCharacters(in: .whitespaces)), value.isFinite, allowZero ? value >= 0 : value > 0 else {
+            throw SimctlHouseError.invalidEnvironment(variable: variable, value: raw, expected: allowZero ? "seconds, 0 or more" : "seconds, more than 0")
+        }
+        return value
     }
 }
 

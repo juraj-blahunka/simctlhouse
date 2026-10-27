@@ -67,7 +67,7 @@ Agents that need a clean device should `reset` it or uninstall their app explici
 
 ## D9. Leases: hard 30 minutes, extended only by `renew`
 
-A lease expires 30 minutes after `acquire` or the last `renew`.
+A lease expires 30 minutes (the default, see D21) after `acquire` or the last `renew`.
 There is no automatic extension based on detected activity, and no per-acquire TTL.
 Trade-off: an agent running a long suite must call `renew`, or its device is reclaimed mid-run.
 
@@ -80,7 +80,7 @@ This is the only case where a device gets a new name; shutting a device down kee
 
 ## D11. Idle shutdown after 15 minutes; `gc` shuts down right away
 
-A free, booted device with no activity for 15 minutes is shut down by the GC that runs before every command.
+A free, booted device with no activity for 15 minutes (the default, see D21) is shut down by the GC that runs before every command.
 It is not erased; it is only cleaned on lease expiry or an explicit `reset`.
 The 15 minutes keep a released device warm for the next agent.
 Measured: re-acquiring a booted device took 2.0s with no boot, booting a shut down one took 4.6s, and shutting a device down and booting it again took 8.5s.
@@ -156,11 +156,15 @@ Agents run as the same user and cooperate, so requiring the lease ID would mostl
 Scripts that want protection against releasing someone else's device pass `--lease-id`, which fails with exit code 4 on a mismatch.
 Trade-off: a confused agent can release a device another agent holds; `history` shows who held it.
 
-## D21. Timeouts are fixed
+## D21. Timeouts are configured with environment variables
 
-The 30-minute lease and the 15-minute idle shutdown have no setting.
-Fixed values keep every agent's expectations the same and keep the skill's instructions (renew at least every 20 minutes) true.
-`SIMCTLHOUSE_LEASE_SECONDS` and `SIMCTLHOUSE_IDLE_SECONDS` exist only so end-to-end tests do not wait half an hour.
+`SIMCTLHOUSE_LEASE_SECONDS` (default 30 minutes) and `SIMCTLHOUSE_IDLE_SECONDS` (default 15 minutes) set the lease length and the idle shutdown.
+An idle time of 0 shuts free devices down on the next command, for machines where CPU and memory matter more than a warm device.
+Environment variables need no new files and fit how agents are launched; a config file in the state directory would be the alternative.
+A malformed value fails every command with exit code 64 rather than falling back to the default, so a typo cannot silently change lease lengths.
+Trade-off: each invocation reads its own environment.
+The lease length is stored in each lease, so it stays consistent, but the idle timeout is enforced by whichever invocation runs GC, so agents should share the same values.
+The skill tells agents to renew relative to the printed expiry instead of a fixed number of minutes.
 
 ## D22. Exit codes are API
 
