@@ -54,10 +54,13 @@ We chose not to: templates are extra hidden state to build, lock, repair and cle
 Trade-off: an `acquire` that finds no free device, and the first boot after a reclaim or `reset`, take about 25s on an idle machine and much longer under load.
 Reusing a free device, the common case, is unaffected.
 
-## D7. Erasing means delete and create
+## D7. `reset` erases in place; expiry deletes and re-creates
 
-"Erase" (on lease expiry and `reset`) deletes the simulator and creates a new one, rather than calling `simctl erase`.
-Both lead to the same slow first boot, but only delete and create changes the UDID, which D10 relies on.
+`reset` shuts the device down and runs `simctl erase`, so it keeps its name and UDID.
+Scripts, Xcode destinations and agents that saved the UDID keep working after a reset.
+Lease expiry instead deletes the simulator and creates a new one, because only that changes the UDID, which D10 relies on.
+Both lead to the same slow first boot (about 25s), so neither is cheaper.
+(`simctl reset` is unrelated: it only rebuilds the launch services database.)
 
 ## D8. Release keeps the device booted and does not erase it
 
@@ -133,7 +136,7 @@ Trade-off: `state.json` grows to a bounded few hundred records.
 Agents mostly hold UDIDs, people mostly read names, so every command that takes a device accepts both.
 `acquire <name|udid>` leases that specific free device, for an agent that wants its earlier device back with the app still installed.
 It fails with exit code 5 instead of falling back to another device, because the caller asked for that one.
-`history` also resolves names and UDIDs a device no longer has (after `reset`, expiry or deletion).
+`history` also resolves names and UDIDs a device no longer has (after expiry or deletion).
 
 ## D18. Independent `simctl` calls run in parallel
 

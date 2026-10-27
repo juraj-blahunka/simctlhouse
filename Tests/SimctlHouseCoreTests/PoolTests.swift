@@ -238,15 +238,27 @@ import Testing
         #expect(try h.backend.devices().isEmpty)
     }
 
-    @Test func resetKeepsNameButReplacesTheSimulator() throws {
+    @Test func resetErasesInPlaceKeepingNameAndUDID() throws {
         let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         #expect(throws: SimctlHouseError.deviceLeased(device: device.name, holder: nil)) { try h.pool.reset(device.name, force: false) }
         try h.pool.release(device.name)
         let reset = try h.pool.reset(device.name, force: false)
         #expect(reset.name == device.name)
-        #expect(reset.udid != device.udid)
+        #expect(reset.udid == device.udid)
         #expect(reset.state == "Shutdown")
         #expect(reset.status == .available)
+        #expect(h.backend.callCount(prefix: "erase") == 1)
+        #expect(h.backend.callCount(prefix: "delete") == 0)
+        #expect(h.backend.callCount(prefix: "create") == 1)
+    }
+
+    @Test func resetOfAVanishedDeviceFailsAndGCRetiresIt() throws {
+        let device = try h.pool.create(DeviceSpec())
+        h.backend.failErase = true
+        #expect(throws: (any Error).self) { try h.pool.reset(device.name, force: false) }
+        #expect(try h.state().devices.first?.status == .available)
+        h.backend.removeBehindOurBack(device.udid!)
+        #expect(try h.pool.collectGarbage().forgotten == [device.name])
     }
 
     @Test func concurrentAcquiresNeverShareADevice() async throws {
@@ -388,14 +400,13 @@ import Testing
         #expect(throws: SimctlHouseError.deviceNotFound("ghost-town")) { try h.pool.history("ghost-town") }
     }
 
-    @Test func forcedResetEndsTheLeaseAndOldUDIDStillFindsTheDevice() throws {
+    @Test func forcedResetEndsTheLease() throws {
         let device = try h.pool.acquire(AcquireRequest(holder: "agent-1"))
-        let reset = try h.pool.reset(device.name, force: true)
+        try h.pool.reset(device.name, force: true)
         let history = try #require(try h.pool.history(device.udid!).first)
         #expect(history.name == device.name)
-        #expect(history.udid == reset.udid)
         #expect(history.leases.map(\.outcome) == [.reset])
-        #expect(history.leases.map(\.udid) == [device.udid])
+        #expect(try h.state().devices.first?.lease == nil)
     }
 
     @Test func retiredDevicesAreCapped() throws {

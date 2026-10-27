@@ -35,7 +35,7 @@ simctlhouse release "$UDID"                       # back to the pool, still boot
 | `udid <name\|udid>` | Print a device's UDID |
 | `history [<name\|udid>] [--json]` | Show who held devices, when, and how each lease ended |
 | `create [--device] [--model] [--os]` | Add a free device to the pool ahead of time |
-| `reset <name\|udid> [--force]` | Erase a device (keeps the name, new UDID) |
+| `reset <name\|udid> [--force]` | Erase a device's contents and settings (keeps the name and UDID) |
 | `delete <name\|udid>... \| --all [--force]` | Delete devices |
 | `gc [--json]` | Reclaim expired leases and shut down every free booted device now |
 

@@ -64,6 +64,8 @@ public protocol SimulatorBackend: Sendable {
     func bootAndWait(udid: String) throws
     func shutdown(udid: String) throws
     func delete(udid: String) throws
+    /// Wipes contents and settings of a shut down device, keeping its UDID.
+    func erase(udid: String) throws
 }
 
 public struct Simctl: SimulatorBackend {
@@ -101,6 +103,10 @@ public struct Simctl: SimulatorBackend {
             if case .simctlFailed(_, _, let stderr) = error, stderr.contains("current state: Shutdown") { return }
             throw error
         }
+    }
+
+    public func erase(udid: String) throws {
+        _ = try run(["erase", udid])
     }
 
     public func delete(udid: String) throws {

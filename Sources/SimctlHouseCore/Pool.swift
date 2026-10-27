@@ -78,10 +78,9 @@ public struct DeviceHistory: Codable, Equatable, Sendable {
     /// Oldest first. An active lease comes last, without `endedAt`.
     public var leases: [LeaseRecord]
 
-    /// Also matches UDIDs the device had before a `reset`.
     func matches(_ ref: String) -> Bool {
         let needle = ref.lowercased()
-        return name == needle || udid?.lowercased() == needle || leases.contains { $0.udid?.lowercased() == needle }
+        return name == needle || udid?.lowercased() == needle
     }
 }
 
@@ -311,7 +310,7 @@ public struct Pool: Sendable {
         try delete(try store.snapshot().devices.map(\.name), force: force)
     }
 
-    /// Wipes a device back to a pristine, shut down state by deleting and re-creating it. Keeps the name.
+    /// Wipes a device back to a pristine, shut down state with `simctl erase`. Keeps the name and the UDID.
     public func reset(_ ref: String, force: Bool) throws -> DeviceInfo {
         try collectGarbage()
         let device = try store.transaction { state -> PoolDevice in
@@ -322,7 +321,23 @@ public struct Pool: Sendable {
             state.devices[index].transition(to: .maintenance, at: now)
             return state.devices[index]
         }
-        try recycle(device, as: device.name)
+        do {
+            try backend.shutdown(udid: device.udid!)
+            try backend.erase(udid: device.udid!)
+        } catch {
+            // Back to the pool either way; if the simulator is gone, the next GC retires it as vanished.
+            try? store.transaction { state in
+                guard let index = state.index(of: device.name) else { return }
+                state.devices[index].transition(to: .available, at: now())
+            }
+            throw error
+        }
+        try store.transaction { state in
+            guard let index = state.index(of: device.name) else { return }
+            let now = now()
+            state.devices[index].transition(to: .available, at: now)
+            state.devices[index].lastActivityAt = now
+        }
         return try info(for: device.name)
     }
 
@@ -536,8 +551,8 @@ public struct Pool: Sendable {
         }
     }
 
-    /// Replaces a `maintenance` device with a newly created one and returns it to the pool shut down.
-    /// Delete and create, rather than `simctl erase`, so the UDID changes and a stale agent cannot reach the new device.
+    /// Replaces a reclaimed device with a newly created one and returns it to the pool shut down.
+    /// Delete and create, rather than `simctl erase`, so the UDID changes and a stale agent cannot reach the device.
     private func recycle(_ device: PoolDevice, as newName: String) throws {
         let catalog = try Catalog(backend: backend)
         guard let type = catalog.deviceType(identifier: device.deviceTypeIdentifier),

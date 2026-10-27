@@ -150,7 +150,7 @@ public struct LeaseRecord: Codable, Equatable, Sendable {
     public var holder: String?
     public var pid: Int32?
     public var cwd: String?
-    /// The device's UDID during the lease. `reset` changes it, so it can differ from the current one.
+    /// The device's UDID during the lease, so each record stands on its own in the audit trail.
     public var udid: String?
     public var acquiredAt: Date
     /// nil while the lease is active.

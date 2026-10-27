@@ -15,6 +15,7 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     private var storage: [String: Device] = [:]
     private(set) var calls: [String] = []
     var failBoot = false
+    var failErase = false
 
     let types: [SimDeviceType] = [
         SimDeviceType(identifier: "type.iPhone-17-Pro", name: "iPhone 17 Pro", productFamily: "iPhone", modelIdentifier: "iPhone18,1"),
@@ -74,6 +75,13 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
         lock.withLock {
             calls.append("shutdown \(storage[udid]?.name ?? udid)")
             storage[udid]?.state = "Shutdown"
+        }
+    }
+
+    func erase(udid: String) throws {
+        try lock.withLock {
+            calls.append("erase \(storage[udid]?.name ?? udid)")
+            if failErase { throw SimctlHouseError.simctlFailed(command: "erase", status: 1, stderr: "boom") }
         }
     }
 

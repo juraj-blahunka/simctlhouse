@@ -296,7 +296,7 @@ struct Delete: ParsableCommand {
 }
 
 struct Reset: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Erase a device back to a pristine, shut down state. Keeps its name; the UDID changes.")
+    static let configuration = CommandConfiguration(abstract: "Erase a device back to a pristine, shut down state. Keeps its name and UDID.")
 
     @Argument(help: ArgumentHelp("The device to erase.", valueName: DeviceRef.valueName))
     var device: String
@@ -309,7 +309,7 @@ struct Reset: ParsableCommand {
     func run() throws {
         try Runtime.run { pool in
             let info = try pool.reset(device, force: force)
-            if output.json { try Runtime.printJSON(info) } else { Runtime.note("Reset \(info.name). New UDID: \(info.udid ?? "-").") }
+            if output.json { try Runtime.printJSON(info) } else { Runtime.note("Reset \(info.name).") }
         }
     }
 }
