@@ -42,6 +42,7 @@ simctlhouse release "$UDID"                       # back to the pool, still boot
 Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--family ipad`, on the newest installed iOS runtime that supports it.
 Devices are named with two random words, such as `amber-falcon`.
 Every command that takes a device accepts its name or its UDID.
+`--json` has the short form `-j`, as in `simctl list -j`.
 
 ## Configuration
 

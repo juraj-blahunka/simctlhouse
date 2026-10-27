@@ -15,6 +15,7 @@ struct SimctlHouse: ParsableCommand {
             Wherever a command takes a device, its name and its UDID both work.
 
             Machine-readable output goes to stdout, human messages to stderr.
+            Commands that print device information accept --json (short: -j) for JSON on stdout.
 
             Environment:
               SIMCTLHOUSE_LEASE_SECONDS  lease length in seconds (default 1800)
@@ -46,7 +47,7 @@ struct SpecOptions: ParsableArguments {
 extension DeviceSpec.Family: ExpressibleByArgument {}
 
 struct OutputOptions: ParsableArguments {
-    @Flag(name: .long, help: "Print JSON to stdout.")
+    @Flag(name: [.customShort("j"), .long], help: "Print JSON to stdout instead of text.")
     var json = false
 }
 
