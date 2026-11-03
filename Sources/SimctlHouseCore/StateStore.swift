@@ -19,6 +19,12 @@ public struct HousePaths: Sendable {
     public var stateLock: URL { root.appending(path: "state.lock") }
     /// Where `state.json` is written before it is renamed into place. Only the lock holder writes it, so one name suffices.
     var stateTemp: URL { root.appending(path: "state.json.tmp") }
+    /// Held by the running daemon for its whole life; also holds its `DaemonRecord`.
+    public var daemonLock: URL { root.appending(path: "daemon.lock") }
+    /// Held by a daemon of a new build while it waits for the one it replaces to exit, so only one ever waits.
+    var daemonNextLock: URL { root.appending(path: "daemon.next.lock") }
+    /// The daemon's log; the previous run's log is kept as `daemon.log.1`.
+    public var daemonLog: URL { root.appending(path: "daemon.log") }
 }
 
 /// An exclusive `flock(2)` on a file. The kernel drops it if the process dies, so a crash never leaves the pool locked.

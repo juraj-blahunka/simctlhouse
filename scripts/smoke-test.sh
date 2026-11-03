@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs a release tarball end to end against real simulators, the way a user would after `brew install`:
-# link the skill, acquire a device, release it, delete the pool, and check that no other simulator was touched.
+# link the skill, acquire a device, check the daemon, release it, delete the pool, and check that no other simulator was touched.
 # Everything runs in throwaway directories (SIMCTLHOUSE_HOME and the skills directory), never in your own setup.
 set -euo pipefail
 
@@ -23,13 +23,17 @@ version="${2:-$(basename "$tarball" | sed -nE 's/^simctlhouse-([0-9]+\.[0-9]+\.[
 step() { printf '==> %s\n' "$*"; }
 fail() { echo "error: $*" >&2; exit 1; }
 udids() { xcrun simctl list devices -j | sed -nE 's/.*"udid" : "([^"]+)".*/\1/p' | sort; }
+daemon_running() { [[ "$("$bin" daemon status --json)" == *'"running" : true'* ]]; }
 
 work="$(mktemp -d)"
 export SIMCTLHOUSE_HOME="$work/home"
+# Free devices shut down after 1s, so the daemon stops on its own right after the release instead of 15 minutes later.
+export SIMCTLHOUSE_IDLE_SECONDS=1
 bin=""
 cleanup() {
     # Leave no pool device behind, even when a check failed halfway.
     [[ -n "$bin" && -x "$bin" ]] && "$bin" delete --all --force >/dev/null 2>&1 || true
+    [[ -n "$bin" && -x "$bin" ]] && "$bin" daemon stop >/dev/null 2>&1 || true
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -57,8 +61,24 @@ udid="$("$bin" acquire --holder smoke-test)"
 xcrun simctl list devices booted | /usr/bin/grep -qF "$udid" || fail "acquired device $udid is not booted."
 "$bin" list leased | /usr/bin/grep -qF "$udid" || fail "list does not show $udid as leased."
 
-step "Releasing and deleting it"
+step "Checking the daemon acquire started"
+# acquire starts it in the background without waiting for it.
+for _ in {1..20}; do daemon_running && break || sleep 0.5; done
+daemon_running || fail "acquire did not start the daemon within 10 seconds."
+[[ "$("$bin" daemon status --json)" == *'"isCurrentBuild" : true'* ]] || fail "the daemon does not run this binary."
+"$bin" daemon stop
+! daemon_running || fail "daemon stop left the daemon running."
+"$bin" daemon start
+daemon_running || fail "daemon start did not start the daemon."
+
+step "Releasing it; the daemon shuts it down and stops on its own"
 "$bin" release "$udid"
+for _ in {1..60}; do daemon_running && sleep 0.5 || break; done
+! daemon_running || fail "the daemon did not stop on its own within 30 seconds of the release."
+xcrun simctl list devices | /usr/bin/grep -F "$udid" | /usr/bin/grep -qF "(Shutdown)" ||
+    fail "the daemon stopped but left released device $udid booted."
+
+step "Deleting it"
 "$bin" delete --all --force
 ! udids | /usr/bin/grep -qxF "$udid" || fail "deleted device $udid still exists."
 

@@ -9,9 +9,10 @@ struct SimctlHouse: ParsableCommand {
         abstract: "Device Hub for Agents: a pool of iOS simulators that agents lease exclusively.",
         discussion: """
             Each agent acquires its own simulator, uses it via its UDID, and releases it when done.
-            Leases expire after 30 minutes (extend with `renew`); expired devices are erased and returned to the pool.
+            Leases expire after 30 minutes (extend with `renew`); expired devices are re-created under a new name and returned to the pool.
             Free devices shut down after 15 minutes of inactivity. simctlhouse only touches devices it created.
             Both timeouts can be changed with environment variables, see below; an idle time of 0 shuts free devices down on the next command.
+            `acquire`, `release` and `renew` start a background daemon that enforces both on time; it exits once the pool is idle.
             Wherever a command takes a device, its name and its UDID both work.
 
             Machine-readable output goes to stdout, human messages to stderr.
@@ -22,9 +23,13 @@ struct SimctlHouse: ParsableCommand {
               SIMCTLHOUSE_IDLE_SECONDS   idle seconds before shutdown (default 900)
               SIMCTLHOUSE_HOLDER         default --holder label
               SIMCTLHOUSE_HOME           state directory (default ~/.simctlhouse)
+              SIMCTLHOUSE_DAEMON         0 to never start the daemon (default 1)
             """,
         version: "0.1.0",
-        subcommands: [Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self, Skill.self]
+        subcommands: [
+            Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self, DaemonCommand.self,
+            Skill.self,
+        ]
     )
 }
 
@@ -57,17 +62,31 @@ enum DeviceRef {
 }
 
 enum Runtime {
-    static func pool() throws -> Pool {
-        Pool(
-            paths: HousePaths.fromEnvironment(),
-            config: try PoolConfig.fromEnvironment(),
-            log: { message in FileHandle.standardError.write(Data((message + "\n").utf8)) }
-        )
+    static let version = SimctlHouse.configuration.version
+
+    static func pool(log: @escaping @Sendable (String) -> Void = note) throws -> Pool {
+        Pool(paths: HousePaths.fromEnvironment(), config: try PoolConfig.fromEnvironment(), log: log)
     }
 
     /// Runs a command body, mapping simctlhouse errors to a stderr message and a distinct exit code.
     static func run(_ body: (Pool) throws -> Void) throws {
         try run { try body(pool()) }
+    }
+
+    /// Runs a command that leaves something for the daemon to watch, then makes sure a daemon runs.
+    /// The daemon is started only after the command's change has committed (see `DaemonLauncher.ensureRunning`).
+    static func runStartingDaemon(_ body: (Pool) throws -> Void) throws {
+        try run {
+            let startsDaemon = try DaemonLauncher.isEnabled()
+            try body(pool())
+            guard startsDaemon else { return }
+            // The command itself succeeded; without a daemon the next command still enforces the timeouts.
+            do {
+                try DaemonLauncher(paths: HousePaths.fromEnvironment()).ensureRunning()
+            } catch {
+                note("warning: could not start the simctlhouse daemon: \(error)")
+            }
+        }
     }
 
     static func run(_ body: () throws -> Void) throws {
@@ -116,7 +135,7 @@ struct Acquire: ParsableCommand {
     }
 
     func run() throws {
-        try Runtime.run { pool in
+        try Runtime.runStartingDaemon { pool in
             let request = AcquireRequest(
                 spec: spec.spec,
                 device: device,
@@ -147,7 +166,7 @@ struct Release: ParsableCommand {
     @OptionGroup var output: OutputOptions
 
     func run() throws {
-        try Runtime.run { pool in
+        try Runtime.runStartingDaemon { pool in
             let info = try pool.release(device, leaseId: leaseId)
             if output.json { try Runtime.printJSON(info) } else { Runtime.note("Released \(info.name).") }
         }
@@ -166,7 +185,7 @@ struct Renew: ParsableCommand {
     @OptionGroup var output: OutputOptions
 
     func run() throws {
-        try Runtime.run { pool in
+        try Runtime.runStartingDaemon { pool in
             let info = try pool.renew(device, leaseId: leaseId)
             if output.json {
                 try Runtime.printJSON(info)
@@ -336,7 +355,7 @@ struct GC: ParsableCommand {
         commandName: "gc",
         abstract: "Reclaim expired leases and shut down every free booted device now.",
         discussion: """
-            Every command already reclaims expired leases and shuts down devices idle for 15 minutes ($SIMCTLHOUSE_IDLE_SECONDS) first.
+            The daemon, and every command first, already reclaim expired leases and shut down devices idle for 15 minutes ($SIMCTLHOUSE_IDLE_SECONDS).
             `gc` also shuts down free devices that have not been idle that long, for example to free CPU and memory.
             Devices another process is using are left running.
             """
@@ -348,6 +367,125 @@ struct GC: ParsableCommand {
         try Runtime.run { pool in
             let report = try pool.collectGarbage(shutDownAllFree: true)
             if output.json { try Runtime.printJSON(report) } else if report.isEmpty { Runtime.note("Nothing to do.") }
+        }
+    }
+}
+
+struct DaemonCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "daemon",
+        abstract: "Inspect or control the background daemon that enforces lease expiry and idle shutdown on time.",
+        discussion: """
+            `acquire`, `release` and `renew` start the daemon when none runs, or when one of another simctlhouse build runs.
+            It reclaims expired leases and shuts down idle free devices as they come due, and exits once nothing is leased, booted or in progress.
+            Without it, every command still does the same work first.
+            It logs to <home>/daemon.log. Set SIMCTLHOUSE_DAEMON=0 to never start it.
+            """,
+        subcommands: [Start.self, Serve.self, Status.self, Stop.self]
+    )
+
+    struct Start: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Start the daemon in the background unless it runs, and wait until it does.",
+            discussion: "It takes its timeouts from this command's environment, e.g. SIMCTLHOUSE_IDLE_SECONDS=1 simctlhouse daemon start."
+        )
+
+        func run() throws {
+            try Runtime.run {
+                let (outcome, state) = try DaemonLauncher(paths: HousePaths.fromEnvironment()).start()
+                switch (outcome, state) {
+                case (.running, _): Runtime.note("Already running.")
+                case (_, .exited): Runtime.note("Started, but nothing is leased, booted or in progress, so it exited again.")
+                case (_, .waiting): Runtime.note("Asked the daemon of another build to stop; this build takes over once it has.")
+                case (.started, .running): Runtime.note("Started.")
+                case (.replacing, .running): Runtime.note("Replaced the daemon of another build.")
+                }
+            }
+        }
+    }
+
+    struct Serve: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Run the daemon in the foreground until the pool is idle. Commands start it on their own.")
+
+        @Flag(name: .long, help: "Log to <home>/daemon.log instead of stderr, as commands start it.")
+        var logFile = false
+
+        @Flag(name: .long, help: "Wait for a running daemon to exit and take over, as commands start the replacement for another build.")
+        var takeOver = false
+
+        func run() throws {
+            try Runtime.run {
+                let signals = DaemonSignals()
+                let handlers = [SIGTERM, SIGINT].map { number in
+                    signal(number, SIG_IGN)
+                    let source = DispatchSource.makeSignalSource(signal: number)
+                    source.setEventHandler { signals.stop() }
+                    source.resume()
+                    return source
+                }
+                defer { handlers.forEach { $0.cancel() } }
+                signal(SIGHUP, SIG_IGN)
+                // Hold no directory busy, such as the one of the command that started it.
+                chdir("/")
+                let pool = try Runtime.pool { message in Runtime.note("\(Format.timestamp(Date()))  \(message)") }
+                let daemon = Daemon(pool: pool, version: Runtime.version, signals: signals)
+                let outcome = try daemon.serve(takeOver: takeOver) {
+                    if logFile { try DaemonLauncher.redirectOutput(to: pool.store.paths) }
+                }
+                if case .alreadyRunning(let record) = outcome {
+                    Runtime.note("A daemon is already running\(record.map { " (pid \($0.pid))" } ?? "").")
+                }
+            }
+        }
+    }
+
+    struct Status: ParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Show whether the daemon runs, and which build.")
+
+        @OptionGroup var output: OutputOptions
+
+        func run() throws {
+            try Runtime.run {
+                let status = try DaemonLauncher(paths: HousePaths.fromEnvironment()).status()
+                if output.json {
+                    try Runtime.printJSON(status)
+                    return
+                }
+                guard status.running else {
+                    let enabled = (try? DaemonLauncher.isEnabled()) ?? true
+                    Runtime.note(
+                        enabled
+                            ? "Not running. The next acquire, release or renew starts it."
+                            : "Not running. SIMCTLHOUSE_DAEMON=0 keeps commands from starting it.")
+                    return
+                }
+                guard let daemon = status.daemon else {
+                    Runtime.note("Starting.")
+                    return
+                }
+                print("Running since \(Format.timestamp(daemon.startedAt)), pid \(daemon.pid), version \(daemon.version)")
+                print(
+                    "Binary: \(Format.path(daemon.build.executable))\(status.isCurrentBuild == false ? " (another build; the next command replaces it)" : "")")
+                print("Log: \(Format.path(HousePaths.fromEnvironment().daemonLog.path))")
+            }
+        }
+    }
+
+    struct Stop: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Stop the daemon. The next acquire, release or renew starts it again; until then every command does its work."
+        )
+
+        func run() throws {
+            try Runtime.run {
+                let launcher = DaemonLauncher(paths: HousePaths.fromEnvironment())
+                guard try launcher.status().running else {
+                    Runtime.note("Not running.")
+                    return
+                }
+                guard try launcher.stop() else { throw SimctlHouseError.io("The daemon did not stop. See `simctlhouse daemon status`.") }
+                Runtime.note("Stopped.")
+            }
         }
     }
 }

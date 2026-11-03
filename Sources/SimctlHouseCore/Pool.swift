@@ -559,7 +559,7 @@ public struct Pool: Sendable {
         concurrentForEach(jobs) { job in
             switch job {
             case .reclaim(let device, let newName, let claim):
-                log("Lease on \(device.name) expired; erasing it and returning it to the pool as \(newName).")
+                log("Lease on \(device.name) expired; re-creating it and returning it to the pool as \(newName).")
                 do {
                     try recycle(device, as: newName, claim: claim)
                 } catch {
@@ -584,6 +584,27 @@ public struct Pool: Sendable {
             }
         }
         return (report, jobs.isEmpty ? live : nil)
+    }
+
+    /// When GC next has something to do on its own, or nil if nothing can come due until another command adds work.
+    /// Reads only `state`, so the daemon can decide to exit under the same lock that a command adding work takes.
+    /// A free device may be booted, so it counts until a collection that started at `collectedAt` or later
+    /// has run after its idle time was up: that collection shut it down, with the same stored `lastActivityAt`.
+    func nextWake(in state: PoolState, collectedAt: Date) -> Date? {
+        state.devices.compactMap { device -> Date? in
+            switch device.status {
+            case .leased:
+                return device.lease?.expiresAt
+            case .provisioning, .maintenance:
+                // The daemon's poll interval notices a claim whose process exited well before this backstop.
+                return device.statusChangedAt.addingTimeInterval(config.hungOperation)
+            case .available:
+                // `state.json` keeps whole seconds, so a device released just after a collection started can carry
+                // a `lastActivityAt` up to a second before it; the slack keeps such a device counted.
+                let idleEnds = device.lastActivityAt.addingTimeInterval(config.idleShutdown)
+                return idleEnds > collectedAt.addingTimeInterval(-1) ? idleEnds : nil
+            }
+        }.min()
     }
 
     // MARK: - internals

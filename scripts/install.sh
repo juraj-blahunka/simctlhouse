@@ -65,6 +65,8 @@ if [[ $uninstall -eq 1 ]]; then
             exit 1
         fi
     fi
+    # A daemon would go on running the removed binary until the pool is idle. Builds without a daemon fail this harmlessly.
+    if [[ -x "$binary" ]] && "$binary" daemon stop >/dev/null 2>&1; then step "Stopped the daemon"; fi
     if [[ -e "$binary" ]]; then rm -f "$binary" && step "Removed $binary"; else step "No binary at $binary"; fi
     exit 0
 fi
