@@ -2,6 +2,8 @@ import Foundation
 
 /// Persisted pool state. Lives in `<home>/state.json` and is only mutated under `StateStore.transaction`.
 public struct PoolState: Codable, Equatable, Sendable {
+    /// Bump with every change to what `state.json` holds. A build refuses a newer file, so it never drops fields it does
+    /// not know; new fields must be optional, so an older file still decodes.
     public static let currentVersion = 1
     /// How many deleted, vanished or reclaimed devices `history` can still report on.
     public static let retiredLimit = 50

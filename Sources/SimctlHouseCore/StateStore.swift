@@ -86,12 +86,18 @@ public struct StateStore: Sendable {
             // Reading anything else as an empty pool would overwrite the registry on the next save and orphan every device.
             throw SimctlHouseError.io("Cannot read \(paths.stateFile.path): \(error.localizedDescription)")
         }
-        // Another version's state is not corrupt: resetting it would wipe the pool of a newer simctlhouse.
-        if let version = (try? Self.decoder.decode(Header.self, from: data))?.version, version != PoolState.currentVersion {
-            throw SimctlHouseError.corruptState("unsupported version \(version) in \(paths.stateFile.path)")
+        // A newer simctlhouse wrote it: reading it here would drop what this build does not know on the next write,
+        // and resetting it would wipe that pool. Refusing keeps an old binary, such as a daemon started before an upgrade,
+        // from ever writing it.
+        if let version = (try? Self.decoder.decode(Header.self, from: data))?.version, version > PoolState.currentVersion {
+            throw SimctlHouseError.corruptState(
+                "\(paths.stateFile.path) is version \(version), written by a newer simctlhouse; this one reads up to \(PoolState.currentVersion). Upgrade it.")
         }
         do {
-            return try Self.decoder.decode(PoolState.self, from: data)
+            // An older version decodes as is: fields added since are optional. The next write stores the current version.
+            var state = try Self.decoder.decode(PoolState.self, from: data)
+            state.version = PoolState.currentVersion
+            return state
         } catch {
             return try reset(corrupt: data, error: error)
         }

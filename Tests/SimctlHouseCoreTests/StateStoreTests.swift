@@ -55,12 +55,23 @@ import Testing
         #expect(Set(try backups.map { try String(contentsOf: paths.root.appending(path: $0), encoding: .utf8) }) == ["first", "second"])
     }
 
-    @Test func stateOfAnotherVersionIsNeverReset() throws {
+    @Test func stateOfANewerVersionIsRefusedAndKept() throws {
         try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
-        try Data(#"{"version": 2, "devices": [], "somethingNew": true}"#.utf8).write(to: paths.stateFile)
-        let error = try #require(throws: SimctlHouseError.self) { try store.snapshot() }
-        #expect(error == .corruptState("unsupported version 2 in \(paths.stateFile.path)"))
-        #expect(FileManager.default.fileExists(atPath: paths.stateFile.path))
+        let newer = #"{"version": 2, "devices": [], "somethingNew": true}"#
+        try Data(newer.utf8).write(to: paths.stateFile)
+        let error = try #require(throws: SimctlHouseError.self) { try store.transaction { $0.devices.removeAll() } }
+        #expect(error.exitCode == 1)
+        #expect(error.description.contains("newer simctlhouse"))
+        #expect(try String(contentsOf: paths.stateFile, encoding: .utf8) == newer)
+    }
+
+    @Test func stateOfAnOlderVersionIsReadAndWrittenAsTheCurrentOne() throws {
+        try addDevice()
+        let current = try String(contentsOf: paths.stateFile, encoding: .utf8)
+        try Data(current.replacingOccurrences(of: #""version" : 1"#, with: #""version" : 0"#).utf8).write(to: paths.stateFile)
+        #expect(try String(contentsOf: paths.stateFile, encoding: .utf8).contains(#""version" : 0"#))
+        #expect(try store.snapshot().devices.map(\.name) == ["brave-otter"])
+        #expect(try store.snapshot().version == PoolState.currentVersion)
     }
 
     private func addDevice() throws {
