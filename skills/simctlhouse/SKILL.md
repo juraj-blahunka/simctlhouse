@@ -44,10 +44,11 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
   Reuse your UDID for every build and test in the task; do not acquire again for each command.
 - Leases expire a fixed time after `acquire` returns or the last renew: 30 minutes by default, or `$SIMCTLHOUSE_LEASE_SECONDS`.
   `acquire` and `renew` print how long you have (`expiresAt` in `--json`).
-  An expired device is re-created under a new name and handed to someone else, on time even if no command runs: `acquire` starts a background daemon (`simctlhouse daemon serve`) for that, which exits on its own once the pool is idle.
-  Leave it running.
+  An expired device is re-created under a new name and handed to someone else, on time even while you are busy in a long build: the old name and UDID then fail with exit code 3.
   If your work may run longer, run `simctlhouse renew "$UDID"` before each long step, at the latest when two thirds of the lease have passed.
-- Released devices stay booted and are not erased.
+- `acquire`, `release` and `renew` start a background daemon (`simctlhouse daemon serve`) that enforces lease expiry and idle shutdown on time, and exits on its own once the pool is idle.
+  Leave it alone: do not stop, kill or start it, and do not set `SIMCTLHOUSE_DAEMON`.
+- Released devices stay booted for the next agent until they have been idle for 15 minutes, and are not erased.
   If you need a pristine device, release it and run `simctlhouse erase <name>`, then acquire again; or uninstall your app first.
 - Never `xcrun simctl shutdown/erase/delete` a device yourself, and never touch simulators simctlhouse did not give you.
 - For retry-safe scripts, use `--json` and pass the lease ID back:
@@ -83,4 +84,5 @@ Every command that takes a device accepts its name or its UDID.
 - `simctlhouse erase <name>` wipes a free device's contents and settings.
 - `simctlhouse delete <name>` deletes a device.
 - `simctlhouse gc` reclaims expired leases and shuts down every free booted device now.
+- `simctlhouse daemon status` shows whether the daemon runs; its log is `~/.simctlhouse/daemon.log`.
 - `simctlhouse skill status` shows where this skill is linked from; `skill install` and `skill uninstall` manage the links for the user.

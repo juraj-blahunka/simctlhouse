@@ -257,6 +257,7 @@ A command run by another build of simctlhouse replaces the daemon, so after an u
 A build is its binary's resolved path, inode and modification time, recorded in `daemon.lock`, rather than the version string, which a rebuild or a copy over the old binary leaves unchanged.
 The command does not wait for the old daemon, which may be in the middle of re-creating devices: it signals it and starts a successor that waits for the lock.
 Replacing the daemon keeps the right build running; keeping an old build from damaging `state.json` is the job of the file's `version` (D31).
+Two builds in use side by side, such as a Homebrew install and a checkout's `scripts/install.sh`, replace each other's daemon whenever the other one runs a command; that costs a restart, never a missed deadline.
 The daemon inherits the environment of the command that started it, including `SIMCTLHOUSE_IDLE_SECONDS`; a command with another value does not restart it.
 `SIMCTLHOUSE_DAEMON=0` keeps commands from starting it, for CI and throwaway homes; `daemon start` starts it explicitly, taking the timeouts from its own environment, which the smoke test uses with a 1s idle time.
 Trade-off: a background process outlives the command that started it, by up to the idle time (15 minutes) after the last device is released.

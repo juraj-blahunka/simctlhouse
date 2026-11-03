@@ -206,7 +206,15 @@ $B history                                         # e2e released, short expired
 $B delete --all --force
 ```
 
-With the daemon, the same cleanup happens without any command: acquire with `SIMCTLHOUSE_LEASE_SECONDS=60`, wait a minute, and `daemon.log` shows the reclaim.
+With the daemon, the same cleanup happens without any command:
+
+```sh
+unset SIMCTLHOUSE_DAEMON
+SIMCTLHOUSE_LEASE_SECONDS=60 $B acquire --holder daemon >/dev/null
+sleep 90 && cat "$SIMCTLHOUSE_HOME/daemon.log"     # shows the reclaim, with no command run since acquire
+$B delete --all --force && $B daemon stop
+```
+
 `scripts/smoke-test.sh` checks the daemon end to end on a release tarball.
 
 ## Make a release
