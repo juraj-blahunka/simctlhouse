@@ -72,7 +72,9 @@ Agents that need a clean device should `erase` it or uninstall their app explici
 
 ## D9. Leases: hard 30 minutes, extended only by `renew`
 
-A lease expires 30 minutes (the default, see D21) after `acquire` or the last `renew`.
+A lease expires 30 minutes (the default, see D21) after `acquire` returns the booted device, or after the last `renew`.
+The clock restarts once the boot completes, so a slow create or boot on a loaded machine does not eat into the agent's time.
+A boot that outlasts the whole lease finds the device reclaimed, and `acquire` fails with exit code 3.
 There is no automatic extension based on detected activity, and no per-acquire TTL.
 Trade-off: an agent running a long suite must call `renew`, or its device is reclaimed mid-run.
 

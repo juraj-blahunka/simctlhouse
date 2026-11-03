@@ -114,7 +114,9 @@ The shutdowns and reclaims touch different simulators, so they run in parallel a
 4. If none matched, reserve a fresh name as `provisioning` with the lease attached, then `simctl create` it outside the lock.
 5. `simctl bootstatus <udid> -b` boots the device and waits until boot has fully completed.
    If boot fails, the device is deleted rather than returned to the pool.
-6. Print the UDID, or JSON with `--json`.
+6. Restart the lease's clock, found by lease id, so create and boot time do not count against it.
+   If the lease is gone (a boot that outlasted it, or a forced `delete`), fail with exit code 3.
+7. Print the UDID, or JSON with `--json`.
 
 ## Audit trail
 

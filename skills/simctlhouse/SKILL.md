@@ -42,7 +42,7 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
 - Always pass `--holder` with a label that says who you are and what you are doing; `simctlhouse history` shows it to whoever investigates later.
 - One lease per task.
   Reuse your UDID for every build and test in the task; do not acquire again for each command.
-- Leases expire a fixed time after acquire or the last renew: 30 minutes by default, or `$SIMCTLHOUSE_LEASE_SECONDS`.
+- Leases expire a fixed time after `acquire` returns or the last renew: 30 minutes by default, or `$SIMCTLHOUSE_LEASE_SECONDS`.
   `acquire` and `renew` print how long you have (`expiresAt` in `--json`).
   An expired device is erased and handed to someone else.
   If your work may run longer, run `simctlhouse renew "$UDID"` before each long step, at the latest when two thirds of the lease have passed.

@@ -21,6 +21,7 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     /// Run outside the backend's lock, to act as another process while a slow `simctl` call is in flight.
     var onCreate: (@Sendable () -> Void)?
     var onErase: (@Sendable () -> Void)?
+    var onBoot: (@Sendable () -> Void)?
 
     let types: [SimDeviceType] = [
         SimDeviceType(identifier: "type.iPhone-17-Pro", name: "iPhone 17 Pro", productFamily: "iPhone", modelIdentifier: "iPhone18,1"),
@@ -70,6 +71,7 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     }
 
     func bootAndWait(udid: String) throws {
+        onBoot?()
         try lock.withLock {
             calls.append("boot \(storage[udid]?.name ?? udid)")
             if failBoot { throw SimctlHouseError.simctlFailed(command: "bootstatus", status: 1, stderr: "boom") }

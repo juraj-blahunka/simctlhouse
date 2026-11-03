@@ -115,6 +115,29 @@ import Testing
         #expect(throws: SimctlHouseError.deviceNotFound(device.udid!)) { try h.pool.renew(device.udid!) }
     }
 
+    @Test func leaseStartsOnceTheDeviceHasBooted() throws {
+        h.backend.onBoot = { [unowned h] in
+            h.backend.onBoot = nil
+            h.clock.advance(minutes: 10)
+        }
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        #expect(device.expiresAt == h.clock.now.addingTimeInterval(PoolConfig().leaseDuration))
+    }
+
+    @Test func bootOutlastingTheLeaseFailsLikeAStaleAgent() throws {
+        h.backend.onBoot = { [unowned h] in
+            h.backend.onBoot = nil
+            h.clock.advance(minutes: 31)
+            #expect((try? h.pool.collectGarbage())?.reclaimed.count == 1)
+        }
+        let error = try #require(throws: SimctlHouseError.self) { try h.pool.acquire(AcquireRequest(spec: DeviceSpec())) }
+        #expect(error.exitCode == 3)
+        let record = try #require(try h.state().devices.first)
+        #expect(record.status == .available)
+        #expect(record.lease == nil)
+        #expect(try h.backend.devices().count == 1)
+    }
+
     @Test func renewExtendsTheLease() throws {
         let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         h.clock.advance(minutes: 25)

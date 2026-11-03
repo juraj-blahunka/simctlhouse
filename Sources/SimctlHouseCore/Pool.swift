@@ -226,7 +226,21 @@ public struct Pool: Sendable {
             try? dropAfterFailedBoot(leaseId: device.lease!.id)
             throw error
         }
-        return try info(for: device.name, catalog: catalog)
+        return try info(for: startLease(device), catalog: catalog)
+    }
+
+    /// Restarts the lease's clock now that the device is ready, so create and boot time do not count against it.
+    /// A boot that outlasted the whole lease finds the device reclaimed, and fails the way a stale agent does.
+    private func startLease(_ device: PoolDevice) throws -> String {
+        try store.transaction { state in
+            guard let index = state.devices.firstIndex(where: { $0.lease?.id == device.lease!.id }), state.devices[index].status == .leased else {
+                throw SimctlHouseError.deviceNotFound(device.name)
+            }
+            let now = now()
+            state.devices[index].lease!.expiresAt = now.addingTimeInterval(config.leaseDuration)
+            state.devices[index].lastActivityAt = now
+            return state.devices[index].name
+        }
     }
 
     /// Deletes a device whose boot failed, provided our lease still holds it: during a long boot the lease may have
