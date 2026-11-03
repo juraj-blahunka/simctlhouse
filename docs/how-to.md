@@ -200,7 +200,7 @@ B=.build/release/simctlhouse
 U=$($B acquire --holder e2e)                       # creates and boots a device (~30s)
 SIMCTLHOUSE_LEASE_SECONDS=5 $B acquire --holder short
 sleep 6 && $B gc --json                            # reclaims the short lease
-$B release "$U" && SIMCTLHOUSE_IDLE_SECONDS=1 $B list   # idle shutdown, as part of any command
+$B release "$U" && sleep 2 && SIMCTLHOUSE_IDLE_SECONDS=1 $B list   # idle shutdown, as part of any command
 $B acquire "$U" >/dev/null && $B release "$U" && $B gc --json   # gc shuts down free devices right away
 $B history                                         # e2e released, short expired
 $B delete --all --force
