@@ -1,15 +1,27 @@
 # Architecture
 
 simctlhouse is a single Swift executable that wraps `xcrun simctl`.
-There is no daemon: every invocation reads the shared state under a file lock, does its work, and exits.
+There is no server: every invocation reads the shared state under a file lock, does its work, and exits.
+An on-demand daemon (see Daemon) runs the same housekeeping on time between commands; it shares the state and the lock like any command and talks to no one.
 `Pool` holds all behaviour; the CLI only parses arguments and formats output.
+
+## Files
+
+Everything lives in `~/.simctlhouse` (override with `SIMCTLHOUSE_HOME`).
+
+| File | Purpose |
+| --- | --- |
+| `state.json` | The registry of every device simctlhouse owns (see State) |
+| `state.lock` | The `flock` target that guards `state.json` |
+| `state.json.tmp` | Where `state.json` is written before it is renamed into place |
+| `state.json.corrupt-<time>` | A `state.json` that could not be decoded, moved aside (D30) |
+| `daemon.lock` | Held by the running daemon for its whole life; holds its pid, version and binary (see Daemon) |
+| `daemon.next.lock` | Held by a daemon of a new build while it waits for the old one to exit |
+| `daemon.log`, `daemon.log.1` | The daemon's log, and the previous run's |
 
 ## State
 
-All state lives in `~/.simctlhouse` (override with `SIMCTLHOUSE_HOME`).
-`state.json` is the registry of every device simctlhouse owns, and `state.lock` is the `flock` target that guards it.
-`state.json` is written to `state.json.tmp`, flushed to the drive with `F_FULLFSYNC`, and renamed into place, so it is never seen half-written or empty, even after a power loss.
-A missing `state.json` is an empty pool; one that cannot be read or decoded fails the command rather than being treated as empty, which would orphan every device on the next write.
+`state.json` lists the pool's devices with their leases and lease history, and the devices that left the pool (`retired`).
 
 ```json
 {
@@ -43,7 +55,19 @@ A missing `state.json` is an empty pool; one that cannot be read or decoded fail
 }
 ```
 
+A device being worked on also carries a `claim` (see Concurrency), and one being re-created after an expired lease a `replacedUDID` (see Garbage collection).
 The CoreSimulator state (`Booted` / `Shutdown`) is never stored; it is read live from `simctl list`.
+Dates are stored in whole seconds.
+
+`state.json` is written to `state.json.tmp`, flushed to the drive with `F_FULLFSYNC`, and renamed into place, so it is never seen half-written or empty, even after a power loss (D5).
+A missing `state.json` is an empty pool.
+How the others are read:
+
+- **An older or the current `version`** decodes as is and is written back as the current version; fields added since are optional.
+- **A newer `version`** fails the command without writing, so an older build never rewrites a newer file and drops what it does not know (D31).
+  `PoolState.currentVersion` is bumped with every change to what the file holds.
+- **One that cannot be decoded** is moved to `state.json.corrupt-<time>` and replaced by an empty pool with a warning (D30).
+- **One that cannot be read** (permissions, I/O) fails the command.
 
 ## Device lifecycle
 
@@ -67,6 +91,20 @@ The CoreSimulator state (`Booted` / `Shutdown`) is never stored; it is read live
 | `leased` | Held by an agent until `lease.expiresAt` | no |
 | `maintenance` | simctlhouse is shutting down, erasing or deleting it; carries a claim | no |
 
+## acquire
+
+1. Run garbage collection.
+2. With `acquire <name|udid>`, lease that device if it is free and no foreign process references it; otherwise fail with exit code 3 or 5.
+3. Otherwise resolve `--family` / `--model` / `--os` to a device type and runtime (`Catalog`), and under the lock pick an `available` device of exactly that type and runtime whose simulator exists and no foreign process references.
+   Prefer a booted one, then the most recently used.
+4. If none matched, reserve a fresh name as `provisioning` with the lease attached, then `simctl create` it outside the lock.
+5. `simctl bootstatus <udid> -b` boots the device and waits until boot has fully completed.
+   If boot fails, the device is deleted rather than returned to the pool.
+6. Restart the lease's clock, found by lease id, so create and boot time do not count against it (D9).
+   If the lease is gone (a boot that outlasted it, or a forced `delete`), fail with exit code 3.
+7. Print the UDID, or JSON with `--json`.
+8. Make sure the daemon runs (see Daemon).
+
 ## Concurrency
 
 Every decision happens inside `StateStore.transaction`, which holds an exclusive `flock` for the read-modify-write and writes the file atomically.
@@ -74,7 +112,7 @@ The live `simctl list` snapshot is taken inside the same transaction, so a devic
 Slow work (create, boot, shutdown, delete) runs outside the lock.
 Before releasing the lock, the transaction moves the device to `provisioning` or `maintenance`, so no other process picks it, and a second short transaction sets its final status afterwards.
 
-The first transaction stamps the record with a claim: a random id plus the pid and start time of the process doing the work.
+The first transaction stamps the record with a claim: a random id plus the pid and start time of the process doing the work (D28).
 The second transaction finds the record by that claim id (`Pool.finish`), never by name, and does nothing if no record carries it any more.
 So work that outlives its claim can never overwrite what happened to the record in the meantime.
 A simulator created for a record that is no longer ours is deleted on the spot, since nothing else would ever touch it.
@@ -94,7 +132,7 @@ Transactions never nest, which would deadlock on that same property.
 
 ## Garbage collection
 
-GC runs at the start of every command:
+GC runs at the start of every command, and in the daemon whenever something comes due:
 
 1. Retires records whose simulator was deleted outside simctlhouse.
 2. Repairs abandoned `provisioning` and `maintenance` records (see Concurrency).
@@ -105,18 +143,48 @@ GC runs at the start of every command:
 
 The shutdowns and reclaims touch different simulators, so they run in parallel after the transaction.
 
-## acquire
+## Daemon
 
-1. Run GC.
-2. With `acquire <name|udid>`, lease that device if it is free and no foreign process references it; otherwise fail with exit code 3 or 5.
-3. Otherwise resolve `--family` / `--model` / `--os` to a device type and runtime (`Catalog`), and under the lock pick an `available` device of exactly that type and runtime whose simulator exists and no foreign process references.
-   Prefer a booted one, then the most recently used.
-4. If none matched, reserve a fresh name as `provisioning` with the lease attached, then `simctl create` it outside the lock.
-5. `simctl bootstatus <udid> -b` boots the device and waits until boot has fully completed.
-   If boot fails, the device is deleted rather than returned to the pool.
-6. Restart the lease's clock, found by lease id, so create and boot time do not count against it.
-   If the lease is gone (a boot that outlasted it, or a forced `delete`), fail with exit code 3.
-7. Print the UDID, or JSON with `--json`.
+### What it does
+
+`simctlhouse daemon serve` (`Daemon.serve`) runs GC whenever something comes due, so an expired lease is reclaimed and an idle device shut down on time even if no other command runs (D29).
+In a loop, it:
+
+1. Runs GC if it is due.
+2. Reads the next deadline from the state (`Pool.nextWake`): the earliest lease expiry, end of a free device's idle time, or hung backstop of work in progress.
+3. Sleeps until then.
+   A state change wakes it at once, to re-read the deadlines: it watches the home directory, and every state write renames `state.json` into place.
+
+It collects at least every 60 seconds (`Daemon.pollInterval`), which bounds how late it notices that a crashed process left a claim behind, and at most once a second.
+A free device may be booted, so it counts as a deadline until a collection has run after its idle time was up; that collection shut it down if it was booted.
+The comparison allows a second of slack, as `state.json` keeps whole seconds.
+The daemon exits once `nextWake` finds nothing, so it runs only while something is leased, booted or in progress.
+
+### Starting and replacing it
+
+There is no port and no socket: commands never talk to the daemon.
+The daemon holds an exclusive `flock` on `daemon.lock` for its whole life and writes its `DaemonRecord` (pid, start time, version, binary) into that file.
+Whether a daemon runs is whether that lock is held; the kernel drops it when the daemon dies, so there is no stale pid file to second-guess.
+
+`acquire`, `release` and `renew` call `DaemonLauncher.ensureRunning` after their change has committed, unless `SIMCTLHOUSE_DAEMON=0`:
+
+1. If `daemon.lock` is free, spawn `simctlhouse daemon serve --log-file` with `posix_spawn`: a new session (`POSIX_SPAWN_SETSID`), stdio on `/dev/null`, and no other descriptor inherited (`POSIX_SPAWN_CLOEXEC_DEFAULT`), so `UDID=$(simctlhouse acquire)` never waits for it.
+   Two commands racing both spawn; the second daemon finds the lock held and exits.
+2. If it is held by another build (another resolved path, inode or modification time of the binary), send that daemon `SIGTERM` and spawn this build with `--take-over`, then return without waiting.
+   The old daemon finishes its current collection and exits; the new one waits up to 10 minutes for the lock, holding `daemon.next.lock` meanwhile so that further commands start no second replacement.
+   The old daemon is signalled only while its pid still has the recorded start time.
+   Until it has exited, the state's `version` keeps it from damaging what the new build wrote (D31).
+
+`daemon start` does the same, and then waits until the daemon it started has taken the lock.
+The daemon takes its timeouts from the environment of the command that started it.
+
+### Stopping
+
+No work is ever left unwatched: the daemon decides to exit and releases `daemon.lock` inside a state transaction.
+A command that adds work commits under the same lock, so either the daemon sees the work and stays, or the command finds the lock free afterwards and starts a new daemon.
+
+It handles `SIGTERM` and `SIGINT` (`daemon stop`, Ctrl-C) by finishing the current collection and exiting, ignores `SIGHUP`, and exits if its home directory is deleted.
+It switches its output to `daemon.log` only once it holds the lock, keeping the previous run's log as `daemon.log.1`, so a losing duplicate never touches the log.
 
 ## Audit trail
 
@@ -131,9 +199,11 @@ Every removal goes through it: `delete`, a failed create or boot, a vanished sim
 Nearly all of a command's time is spent in `xcrun simctl`, 0.1-0.3s per call on an idle machine.
 Independent calls run in parallel (`concurrently`): GC's device listing overlaps the device type and runtime listings.
 `list` reuses GC's device snapshot when GC changed nothing, so on an idle machine it costs about one `simctl` call.
+Between deadlines the daemon costs nothing: it sleeps, and a state change only makes it re-read `state.json`.
 
 ## Testing seams
 
 `Pool` takes a `SimulatorBackend`, a `ProcessScanner`, a clock and a logger.
 Unit tests use `FakeBackend` (an in-memory CoreSimulator) and `TestClock` to cover expiry, idle shutdown, crash recovery and concurrent acquires without real simulators.
-`SIMCTLHOUSE_HOME`, `SIMCTLHOUSE_LEASE_SECONDS` and `SIMCTLHOUSE_IDLE_SECONDS` (see D21) let end-to-end runs use real simulators in an isolated home with short timeouts.
+`Daemon` takes its sleep as a function, so `DaemonTests` drive it through `TestClock`; `DaemonLauncher` takes its spawn and signal functions.
+`SIMCTLHOUSE_HOME`, `SIMCTLHOUSE_LEASE_SECONDS` and `SIMCTLHOUSE_IDLE_SECONDS` (see D21) let end-to-end runs use real simulators in an isolated home with short timeouts, and `SIMCTLHOUSE_DAEMON=0` leaves the housekeeping to the commands.

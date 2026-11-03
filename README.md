@@ -18,10 +18,23 @@ simctlhouse release "$UDID"                       # back to the pool, still boot
 - **Pooling.** Released devices are reused, still booted, by the next agent asking for the same model and OS.
 - **Plain simulators.** Devices are ordinary simulators made with `simctl create`, visible in Xcode.
   A new device's first boot takes about 25s, a reused one is ready immediately.
-- **Audit trail.** Each device remembers its last 5 holders with acquire and release times, and devices that left the pool stay queryable.
-- **Automatic reclaim.** A lease not released or renewed within 30 minutes (configurable) is erased and returned to the pool.
+- **Automatic reclaim.** A lease not released or renewed within 30 minutes (configurable) ends: the device is re-created under a new name and returned to the pool, so a stale agent cannot reach it.
 - **Idle shutdown.** Free devices shut down after 15 minutes of inactivity (configurable), or right away with `simctlhouse gc`.
+- **On time, without a service to install.** A small daemon starts on demand, does the cleanup when it is due, and exits once the pool is idle.
+- **Audit trail.** Each device remembers its last 5 holders with acquire and release times, and devices that left the pool stay queryable.
 - **Hands off your simulators.** simctlhouse only touches devices it created, and skips any device it sees another process using.
+
+## How it works
+
+The pool is one JSON file, `~/.simctlhouse/state.json`.
+Every command reads and changes it under a file lock, so agents running commands at the same time never step on each other; there is no server.
+Before doing its own work, every command does the housekeeping: it reclaims expired leases, shuts down devices that have been idle too long, and repairs anything a crashed command left half done.
+
+So that the housekeeping also happens when no command runs, `acquire`, `release` and `renew` start a background daemon if none is running.
+It sleeps until the next lease expires or a free device's idle time ends, does the housekeeping then, and wakes at once whenever a command changes the pool.
+It talks to no one; like the commands, it only reads and writes the state file.
+It exits on its own once nothing is leased, booted or in progress, and after an upgrade the next command replaces it with the new build.
+`simctlhouse daemon status` shows it.
 
 ## Commands
 
@@ -38,6 +51,7 @@ simctlhouse release "$UDID"                       # back to the pool, still boot
 | `erase <name\|udid> [--force]` | Erase a device's contents and settings (keeps the name and UDID) |
 | `delete <name\|udid>... \| --all [--force]` | Delete devices |
 | `gc [--json]` | Reclaim expired leases and shut down every free booted device now |
+| `daemon status [--json] \| start \| stop` | Inspect or control the background daemon; commands start it on their own |
 | `skill install\|uninstall\|status [--skills-dir DIR]...` | Link the agent skill shipped with a release into your coding agents |
 
 Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--family ipad`, on the newest installed iOS runtime that supports it.
@@ -50,11 +64,12 @@ Every command that takes a device accepts its name or its UDID.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SIMCTLHOUSE_LEASE_SECONDS` | `1800` | Lease length; a lease not renewed within it is reclaimed |
-| `SIMCTLHOUSE_IDLE_SECONDS` | `900` | How long a free booted device may sit idle before it is shut down; `0` shuts it down on the next command |
+| `SIMCTLHOUSE_IDLE_SECONDS` | `900` | How long a free booted device may sit idle before it is shut down; `0` shuts it down right away |
 | `SIMCTLHOUSE_HOLDER` | | Default `--holder` label |
 | `SIMCTLHOUSE_HOME` | `~/.simctlhouse` | Where the pool's state lives |
+| `SIMCTLHOUSE_DAEMON` | `1` | `0` keeps commands from starting the daemon, for CI or a throwaway home |
 
-Set them where your agents run, for example in your shell profile, so every simctlhouse invocation sees the same values.
+Set them where your agents run, for example in your shell profile, so every simctlhouse invocation, and the daemon they start, sees the same values.
 
 ## Install
 
@@ -72,8 +87,8 @@ Run `simctlhouse skill install` once to link it into your agents; upgrades of th
 
 ## Docs
 
-- [How-to](docs/how-to.md): usage recipes, exit codes, testing, repair
-- [Architecture](docs/architecture.md): state, locking, lifecycle, GC
+- [How-to](docs/how-to.md): usage recipes, timeouts, the daemon, history, repair, exit codes, testing, releases
+- [Architecture](docs/architecture.md): files, state, lifecycle, locking, garbage collection, the daemon
 - [Decisions](docs/decisions.md): what we chose and why
 
 ## License

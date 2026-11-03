@@ -87,19 +87,18 @@ This is the only case where a device gets a new name; shutting a device down kee
 
 ## D11. Idle shutdown after 15 minutes; `gc` shuts down right away
 
-A free, booted device with no activity for 15 minutes (the default, see D21) is shut down by the GC that runs before every command.
+A free, booted device with no activity for 15 minutes (the default, see D21) is shut down by garbage collection, which the daemon runs on time (D29) and every command runs first.
 It is not erased; it is only cleaned on lease expiry or an explicit `erase`.
 The 15 minutes keep a released device warm for the next agent.
 Measured: re-acquiring a booted device took 2.0s with no boot, booting a shut down one took 4.6s, and shutting a device down and booting it again took 8.5s.
 The explicit `gc` command skips the wait and shuts down every free booted device, for when you want the CPU and memory back now.
 Both spare devices a foreign process references (D14).
 
-## D12. Lazy garbage collection, no daemon
+## D12. Every command collects garbage first
 
-Lease expiry and idle shutdown are enforced at the start of every command.
+Lease expiry and idle shutdown are enforced at the start of every command, so the pool is consistent whenever a command reads it, with or without a daemon.
 The `gc` command runs the same collection on demand, and also shuts down free devices before their idle timeout (D11).
-There is no daemon or launchd agent.
-Trade-off: if nothing runs simctlhouse, expired leases and idle devices are only handled on the next invocation.
+On their own, commands left expired leases and idle devices waiting for the next invocation; since D29 an on-demand daemon also collects on time.
 
 ## D13. No capacity cap
 
@@ -172,7 +171,7 @@ An idle time of 0 shuts free devices down on the next command, for machines wher
 Environment variables need no new files and fit how agents are launched; a config file in the state directory would be the alternative.
 A malformed value fails every command with exit code 64 rather than falling back to the default, so a typo cannot silently change lease lengths.
 Trade-off: each invocation reads its own environment.
-The lease length is stored in each lease, so it stays consistent, but the idle timeout is enforced by whichever invocation runs GC, so agents should share the same values.
+The lease length is stored in each lease, so it stays consistent, but the idle timeout is enforced by whichever invocation runs GC, and by the daemon with the value of the command that started it (D29), so agents should share the same values.
 The skill tells agents to renew relative to the printed expiry instead of a fixed number of minutes.
 
 ## D22. Exit codes are API
@@ -242,3 +241,39 @@ It cannot stop the late `simctl` call itself: a hung `erase`, `shutdown` or `del
 Accepted, since it takes a `simctl` call stuck for over an hour.
 Records written by an older version carry no claim and are repaired only after the hour.
 Trade-off: a device whose simctlhouse process hangs stays unusable for up to an hour instead of 10 minutes.
+
+## D29. An on-demand daemon enforces timeouts on time
+
+Without one, an expired lease kept its device booted, and a released device stayed booted past its idle time, until some command happened to run (D12).
+`acquire`, `release` and `renew` now start `simctlhouse daemon serve` when none runs; it collects garbage as deadlines come due and exits once nothing is leased, booted or in progress.
+A launchd agent was rejected: it runs whether or not the pool is in use, and needs installing and uninstalling.
+
+The daemon needs no port or socket, because all coordination already goes through `state.json` and its lock.
+A daemon that commands talk to would need a port or socket, a protocol, versioning and authentication, all for no behaviour the state does not already carry.
+An exclusive `flock` on `daemon.lock`, held for the daemon's life, says whether one runs; unlike a pid file it cannot go stale.
+The daemon releases it inside a state transaction when it decides to exit, so a command that adds work concurrently always either keeps it alive or starts a new one.
+
+A command run by another build of simctlhouse replaces the daemon, so after an upgrade the new build's daemon runs.
+A build is its binary's resolved path, inode and modification time, recorded in `daemon.lock`, rather than the version string, which a rebuild or a copy over the old binary leaves unchanged.
+The command does not wait for the old daemon, which may be in the middle of re-creating devices: it signals it and starts a successor that waits for the lock.
+Replacing the daemon keeps the right build running; keeping an old build from damaging `state.json` is the job of the file's `version` (D31).
+The daemon inherits the environment of the command that started it, including `SIMCTLHOUSE_IDLE_SECONDS`; a command with another value does not restart it.
+`SIMCTLHOUSE_DAEMON=0` keeps commands from starting it, for CI and throwaway homes; `daemon start` starts it explicitly, taking the timeouts from its own environment, which the smoke test uses with a 1s idle time.
+Trade-off: a background process outlives the command that started it, by up to the idle time (15 minutes) after the last device is released.
+
+## D30. A corrupt state file is reset
+
+A `state.json` that cannot be decoded is moved to `state.json.corrupt-<time>`, and the command goes on with an empty pool and a warning.
+Failing every command until someone repairs the file by hand wedged the whole pool, including the daemon, over one bad write.
+The cost is that the simulators the corrupt file listed are no longer managed: simctlhouse never touches a simulator it has no record of (D3), so they stay until deleted by hand, and the moved file keeps their UDIDs for that.
+A file that cannot be read at all (permissions, I/O) still fails the command, since it may be fine on the next try.
+So does a file of a newer `version` (D31): a newer simctlhouse wrote it, and resetting it would wipe that pool.
+
+## D31. `state.json` is versioned; a build refuses a newer file
+
+`PoolState.currentVersion` is bumped with every change to what `state.json` holds, and new fields are optional.
+A build reads files up to its own version and writes its own version; a newer file fails every command with exit code 1 and an upgrade hint, without being written.
+Without this, an older build decodes a newer file, ignores the fields it does not know, and drops them on its next write: claims, for example, which would let two processes act on one device again (D28).
+Replacing the daemon after an upgrade (D29) is not enough on its own: any old binary can write the file, such as a second install, a script pinned to an old path, or an old daemon finishing its last collection.
+Trade-off: after an upgrade that bumps the version, an older binary on the same machine stops working instead of limping on.
+

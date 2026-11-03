@@ -22,6 +22,7 @@ scripts/smoke-test.sh TARBALL       # run a release tarball against real simulat
   Keep logic out of it.
 - `Sources/SimctlHouseCore/`: all behaviour.
   `Pool` is the entry point; `SimulatorBackend` and `ProcessScanner` are the seams for tests.
+  `Daemon` runs the background daemon and `DaemonLauncher` starts, replaces and stops it (`Daemon.swift`).
 - `Tests/SimctlHouseCoreTests/Fakes.swift`: `FakeBackend`, `FakeScanner`, `TestClock`, `Harness`.
 - `skills/simctlhouse/SKILL.md`: the agent skill.
   Update it whenever CLI behaviour or flags change, and keep it free of agent-specific instructions.
@@ -36,6 +37,8 @@ scripts/smoke-test.sh TARBALL       # run a release tarball against real simulat
   Never hold the lock across create, boot or shutdown; mark the device `provisioning` or `maintenance` with a claim (`PoolDevice.begin`) instead.
   Finish that work through `Pool.finish(claim)`, never by looking the device up by name (see D28).
 - Take the live `simctl list` snapshot inside the transaction that acts on it.
+- Commands talk to the daemon only through `state.json`; start it after the command's change has committed (`DaemonLauncher.ensureRunning`, see D29).
+- Bump `PoolState.currentVersion` with every change to what `state.json` holds, and keep new fields optional; older builds then refuse the file instead of dropping what they do not know.
 - Pool devices live in the default device set, because xcodebuild cannot see custom sets.
   Devices come from `simctl create` (see D6).
 - `erase` wipes in place and keeps the UDID; lease expiry deletes and creates again, so the UDID changes (see D7).
@@ -48,9 +51,10 @@ scripts/smoke-test.sh TARBALL       # run a release tarball against real simulat
 
 ## Testing
 
-- Add a unit test in `PoolTests` for any pool behaviour change; drive time with `TestClock`.
+- Add a unit test in `PoolTests` for any pool behaviour change, and in `DaemonTests` for the daemon; drive time with `TestClock`.
 - Verify end to end with real simulators in an isolated home (`SIMCTLHOUSE_HOME=$(mktemp -d)`), with `SIMCTLHOUSE_LEASE_SECONDS` / `SIMCTLHOUSE_IDLE_SECONDS` to shorten timeouts.
-  Finish with `delete --all --force` and check that the user's simulator count in `xcrun simctl list devices` is unchanged.
+  The daemon starts there too; set `SIMCTLHOUSE_DAEMON=0` to see what the commands alone do.
+  Finish with `delete --all --force` and `daemon stop`, and check that the user's simulator count in `xcrun simctl list devices` is unchanged.
 - The machine may be heavily loaded by other agents; create and boot timings are noisy, so do not assert on them.
 
 ## Style

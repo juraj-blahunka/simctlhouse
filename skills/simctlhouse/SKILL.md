@@ -44,7 +44,8 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
   Reuse your UDID for every build and test in the task; do not acquire again for each command.
 - Leases expire a fixed time after `acquire` returns or the last renew: 30 minutes by default, or `$SIMCTLHOUSE_LEASE_SECONDS`.
   `acquire` and `renew` print how long you have (`expiresAt` in `--json`).
-  An expired device is erased and handed to someone else.
+  An expired device is re-created under a new name and handed to someone else, on time even if no command runs: `acquire` starts a background daemon (`simctlhouse daemon serve`) for that, which exits on its own once the pool is idle.
+  Leave it running.
   If your work may run longer, run `simctlhouse renew "$UDID"` before each long step, at the latest when two thirds of the lease have passed.
 - Released devices stay booted and are not erased.
   If you need a pristine device, release it and run `simctlhouse erase <name>`, then acquire again; or uninstall your app first.
@@ -66,6 +67,7 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
 | 4 | Lease ID mismatch / not leased | The device is no longer yours. Acquire a new one |
 | 5 | Device leased, busy, or used by another process | Pick another device, or use `--force` only on a device you own |
 | 1 | simctl failure | Read stderr; retry once, then report |
+| 64 | Invalid usage or `SIMCTLHOUSE_*` value | Fix the command or the environment variable named in stderr |
 
 ## Other commands
 

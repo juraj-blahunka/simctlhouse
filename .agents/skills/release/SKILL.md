@@ -103,7 +103,7 @@ Run the exact bytes you are about to publish against real simulators:
 scripts/smoke-test.sh dist/simctlhouse-X.Y.Z-macos.tar.gz
 ```
 
-It unpacks the tarball into a temporary directory, links the skill there, acquires a device in a throwaway `SIMCTLHOUSE_HOME`, releases and deletes it, and checks that every simulator that existed before still exists.
+It unpacks the tarball into a temporary directory, links the skill there, acquires a device in a throwaway `SIMCTLHOUSE_HOME`, checks that the daemon started and can be stopped and started again, releases the device and waits for the daemon to shut it down and exit on its own, deletes it, and checks that every simulator that existed before still exists.
 A first boot takes about 30 seconds; allow up to 5 minutes on a loaded machine.
 If it reports missing simulators, show the list to the user: other agents may have deleted their own devices meanwhile, and only the user can tell.
 
