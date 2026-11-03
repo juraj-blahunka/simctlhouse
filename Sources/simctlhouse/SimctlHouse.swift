@@ -147,7 +147,7 @@ struct Acquire: ParsableCommand {
             if output.json {
                 try Runtime.printJSON(device)
             } else {
-                Runtime.note("Acquired \(device.name) (\(device.model), iOS \(device.os)). Lease expires in \(Format.minutes(until: device.expiresAt)).")
+                Runtime.note("Acquired \(device.name) (\(device.model), iOS \(device.os)). Lease expires in \(Format.leaseLength(pool.config.leaseDuration)).")
                 print(device.udid ?? "")
             }
         }
@@ -190,7 +190,7 @@ struct Renew: ParsableCommand {
             if output.json {
                 try Runtime.printJSON(info)
             } else {
-                Runtime.note("Renewed \(info.name). Lease expires in \(Format.minutes(until: info.expiresAt)).")
+                Runtime.note("Renewed \(info.name). Lease expires in \(Format.leaseLength(pool.config.leaseDuration)).")
             }
         }
     }
@@ -605,7 +605,15 @@ struct Skill: ParsableCommand {
 enum Format {
     static func minutes(until date: Date?) -> String {
         guard let date else { return "-" }
-        let seconds = Int(date.timeIntervalSinceNow.rounded())
+        return remaining(date.timeIntervalSinceNow)
+    }
+
+    /// How long a lease just granted by `acquire` or `renew` lasts. They set its clock right before printing,
+    /// and its stored `expiresAt` lost the fraction of a second, so counting down to it would show 59s for a 60s lease.
+    static func leaseLength(_ duration: TimeInterval) -> String { remaining(duration) }
+
+    private static func remaining(_ interval: TimeInterval) -> String {
+        let seconds = Int(interval.rounded())
         if seconds <= 0 { return "expired" }
         return seconds < 60 ? "\(seconds)s" : "\((seconds + 30) / 60)m"
     }
