@@ -16,6 +16,11 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     private(set) var calls: [String] = []
     var failBoot = false
     var failErase = false
+    /// Names of devices whose deletion fails.
+    var failDelete: Set<String> = []
+    /// Run outside the backend's lock, to act as another process while a slow `simctl` call is in flight.
+    var onCreate: (@Sendable () -> Void)?
+    var onErase: (@Sendable () -> Void)?
 
     let types: [SimDeviceType] = [
         SimDeviceType(identifier: "type.iPhone-17-Pro", name: "iPhone 17 Pro", productFamily: "iPhone", modelIdentifier: "iPhone18,1"),
@@ -55,7 +60,8 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     func runtimes() throws -> [SimRuntime] { lock.withLock { runtimeList } }
 
     func create(name: String, deviceType: String, runtime: String) throws -> String {
-        lock.withLock {
+        onCreate?()
+        return lock.withLock {
             calls.append("create \(name)")
             let udid = UUID().uuidString
             storage[udid] = Device(udid: udid, name: name, state: "Shutdown", deviceType: deviceType, runtime: runtime)
@@ -79,6 +85,7 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     }
 
     func erase(udid: String) throws {
+        onErase?()
         try lock.withLock {
             calls.append("erase \(storage[udid]?.name ?? udid)")
             if failErase { throw SimctlHouseError.simctlFailed(command: "erase", status: 1, stderr: "boom") }
@@ -86,8 +93,11 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     }
 
     func delete(udid: String) throws {
-        lock.withLock {
+        try lock.withLock {
             calls.append("delete \(storage[udid]?.name ?? udid)")
+            if let name = storage[udid]?.name, failDelete.contains(name) {
+                throw SimctlHouseError.simctlFailed(command: "delete", status: 1, stderr: "boom")
+            }
             storage[udid] = nil
         }
     }
@@ -115,9 +125,14 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
 final class FakeScanner: ProcessScanner, @unchecked Sendable {
     private let lock = NSLock()
     private var lines: [String] = []
+    private var exited: Set<Int32> = []
 
     func set(_ lines: [String]) { lock.withLock { self.lines = lines } }
     func commandLines() throws -> [String] { lock.withLock { lines } }
+
+    /// Every process is running, since one fixed moment, until `exit` ends it.
+    func startTime(of pid: Int32) -> Date? { lock.withLock { exited.contains(pid) ? nil : Date(timeIntervalSince1970: 1_700_000_000) } }
+    func exit(_ pid: Int32) { _ = lock.withLock { exited.insert(pid) } }
 }
 
 final class TestClock: @unchecked Sendable {
@@ -128,21 +143,21 @@ final class TestClock: @unchecked Sendable {
     func advance(minutes: Double) { lock.withLock { current = current.addingTimeInterval(minutes * 60) } }
 }
 
-struct Harness {
+/// A pool home in a temp directory, removed when the test that made it is done.
+final class Harness: Sendable {
     let backend = FakeBackend()
     let scanner = FakeScanner()
     let clock = TestClock()
-    let root: URL
+    let root = FileManager.default.temporaryDirectory.appending(path: "simctlhouse-tests-\(UUID().uuidString)")
 
-    init() {
-        root = FileManager.default.temporaryDirectory.appending(path: "simctlhouse-tests-\(UUID().uuidString)")
-    }
+    deinit { try? FileManager.default.removeItem(at: root) }
 
-    var pool: Pool { pool(config: PoolConfig()) }
+    var pool: Pool { pool() }
 
-    func pool(config: PoolConfig) -> Pool {
+    /// `processID` stands in for another simctlhouse process, which `scanner.exit` can make crash.
+    func pool(config: PoolConfig = PoolConfig(), processID: Int32 = getpid()) -> Pool {
         let clock = clock
-        return Pool(paths: HousePaths(root: root), backend: backend, scanner: scanner, config: config, now: { clock.now })
+        return Pool(paths: HousePaths(root: root), backend: backend, scanner: scanner, config: config, processID: processID, now: { clock.now })
     }
 
     func state() throws -> PoolState { try StateStore(paths: HousePaths(root: root)).snapshot() }

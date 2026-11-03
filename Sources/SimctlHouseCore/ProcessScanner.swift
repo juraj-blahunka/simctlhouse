@@ -1,6 +1,7 @@
 import Foundation
 
-/// Best-effort detection of simulator use that simctlhouse did not hand out.
+/// What simctlhouse learns from running processes: best-effort detection of simulator use it did not hand out,
+/// and whether the process behind a `Claim` is still alive.
 ///
 /// A process counts as a user of a device when its command line mentions the device UDID,
 /// e.g. `xcodebuild -destination id=<UDID>` or `xcrun simctl install <UDID> ...`.
@@ -8,6 +9,8 @@ import Foundation
 /// directory and are ignored. Use from the Xcode IDE or Simulator.app does not show up here.
 public protocol ProcessScanner: Sendable {
     func commandLines() throws -> [String]
+    /// When the process started, in whole seconds, or nil if no such process is running.
+    func startTime(of pid: Int32) -> Date?
 }
 
 public struct PSProcessScanner: ProcessScanner {
@@ -16,6 +19,15 @@ public struct PSProcessScanner: ProcessScanner {
     public func commandLines() throws -> [String] {
         let result = try Subprocess.run("/bin/ps", ["-axww", "-o", "command="])
         return String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
+    }
+
+    public func startTime(of pid: Int32) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        // An unknown pid succeeds with size 0. A zombie has exited; only its exit status is left to collect.
+        guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0, info.kp_proc.p_stat != SZOMB else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(info.kp_proc.p_starttime.tv_sec))
     }
 }
 

@@ -192,26 +192,14 @@ import Testing
         #expect(try h.state().devices.isEmpty)
     }
 
-    @Test func recoversFromAbandonedProvisioning() throws {
-        let name = "brave-otter"
-        try StateStore(paths: HousePaths(root: h.root)).transaction { state in
-            state.devices.append(
-                PoolDevice(
-                    name: name, udid: nil, deviceTypeIdentifier: "type.iPhone-18-Pro", runtimeIdentifier: "rt.iOS-27-0", status: .provisioning, now: h.clock.now
-                ))
-        }
-        let orphan = h.backend.addForeignDevice(name: name, booted: false)
-        h.clock.advance(minutes: 5)
-        #expect(try h.pool.collectGarbage().forgotten.isEmpty)
-        h.clock.advance(minutes: 6)
-        #expect(try h.pool.collectGarbage().forgotten == [name])
-        #expect(h.backend.device(orphan) == nil)
-    }
-
     @Test func failedBootDropsTheDevice() throws {
         h.backend.failBoot = true
-        #expect(throws: (any Error).self) { try h.pool.acquire(AcquireRequest(spec: DeviceSpec())) }
+        #expect(throws: (any Error).self) { try h.pool.acquire(AcquireRequest(spec: DeviceSpec(), holder: "agent-1")) }
         #expect(try h.state().devices.isEmpty)
+        #expect(try h.backend.devices().isEmpty)
+        let retired = try #require(try h.state().retired.last)
+        #expect(retired.reason == .failed)
+        #expect(retired.history.map(\.outcome) == [.failed])
     }
 
     @Test func createAddsAFreeShutDownDevice() throws {
@@ -228,6 +216,26 @@ import Testing
         #expect(try h.pool.delete([device.name], force: true) == [device.name])
         #expect(h.backend.device(device.udid) == nil)
         #expect(try h.state().devices.isEmpty)
+    }
+
+    @Test func failedDeleteHandsTheDeviceBackAndDeletesTheRest() throws {
+        let stuck = try h.pool.acquire(AcquireRequest(spec: DeviceSpec(), holder: "agent-1"))
+        let other = try h.pool.create(DeviceSpec())
+        h.backend.failDelete = [stuck.name]
+        #expect(throws: (any Error).self) { try h.pool.delete([stuck.name, other.name], force: true) }
+        #expect(h.backend.device(other.udid) == nil)
+        let record = try #require(try h.state().devices.first)
+        #expect(try h.state().devices.count == 1)
+        #expect(record.name == stuck.name)
+        #expect(record.status == .leased)
+        #expect(record.lease?.holder == "agent-1")
+        #expect(record.history.isEmpty)
+    }
+
+    @Test func deleteNamesEachDeviceOnce() throws {
+        let device = try h.pool.create(DeviceSpec())
+        #expect(try h.pool.delete([device.name, device.udid!], force: false) == [device.name])
+        #expect(h.backend.callCount(prefix: "delete") == 1)
     }
 
     @Test func deleteAllRemovesEveryDevice() throws {
@@ -432,5 +440,164 @@ import Testing
         _ = try h.pool.delete([device.name], force: false)
         #expect(try h.state().retired.map(\.name) == [device.name])
         for _ in 0..<20 { #expect(try h.pool.create(DeviceSpec()).name != device.name) }
+    }
+
+    // MARK: - claims on provisioning and maintenance
+
+    @Test func slowWorkOfALiveProcessIsNeverTakenOver() throws {
+        let device = try h.pool.create(DeviceSpec())
+        h.backend.onErase = { [unowned h] in
+            h.backend.onErase = nil
+            h.clock.advance(minutes: 59)
+            #expect((try? h.pool.collectGarbage())?.isEmpty == true)
+            #expect((try? h.pool.acquire(AcquireRequest(spec: DeviceSpec(), holder: "agent-2")))?.name != device.name)
+        }
+        #expect(try h.pool.erase(device.name, force: false).status == .available)
+        #expect(h.backend.callCount(prefix: "create") == 2)
+    }
+
+    @Test func workRepairedAsHungNeverOverwritesTheNextHolder() throws {
+        let device = try h.pool.create(DeviceSpec())
+        h.backend.onErase = { [unowned h] in
+            h.backend.onErase = nil
+            h.clock.advance(minutes: 61)
+            #expect((try? h.pool.acquire(AcquireRequest(device: device.name, holder: "agent-2")))?.status == .leased)
+        }
+        #expect(throws: SimctlHouseError.takenOver(device: device.name)) { try h.pool.erase(device.name, force: false) }
+        let record = try #require(try h.state().devices.first)
+        #expect(record.status == .leased)
+        #expect(record.lease?.holder == "agent-2")
+        #expect(record.claim == nil)
+    }
+
+    @Test func workOfACrashedProcessIsRepairedRightAway() throws {
+        let device = try h.pool.create(DeviceSpec())
+        let crashing = h.pool(processID: 4242)
+        h.backend.onErase = { [unowned h] in
+            h.backend.onErase = nil
+            h.scanner.exit(4242)
+            #expect((try? h.pool.collectGarbage())?.recovered == [device.name])
+        }
+        #expect(throws: SimctlHouseError.takenOver(device: device.name)) { try crashing.erase(device.name, force: false) }
+        #expect(try h.state().devices.map(\.status) == [.available])
+    }
+
+    @Test func recoversFromAbandonedProvisioning() throws {
+        try addRecord("brave-otter", .provisioning, claim: Claim(id: "c1", pid: 4242, processStartedAt: Date(timeIntervalSince1970: 1_700_000_000)))
+        let orphan = h.backend.addForeignDevice(name: "brave-otter", booted: false)
+        h.clock.advance(minutes: 30)
+        #expect(try h.pool.collectGarbage().forgotten.isEmpty)
+        h.scanner.exit(4242)
+        #expect(try h.pool.collectGarbage().forgotten == ["brave-otter"])
+        #expect(h.backend.device(orphan) == nil)
+        #expect(try h.state().retired.map(\.reason) == [.abandoned])
+    }
+
+    @Test func aRecycledPidDoesNotKeepAClaimAlive() throws {
+        try addRecord("brave-otter", .provisioning, claim: Claim(id: "c1", pid: 4242, processStartedAt: Date(timeIntervalSince1970: 1_600_000_000)))
+        #expect(try h.pool.collectGarbage().forgotten == ["brave-otter"])
+    }
+
+    @Test func recordsWithoutAClaimAreRepairedOnlyAfterTheHungTimeout() throws {
+        try addRecord("brave-otter", .provisioning, claim: nil)
+        h.clock.advance(minutes: 59)
+        #expect(try h.pool.collectGarbage().forgotten.isEmpty)
+        h.clock.advance(minutes: 2)
+        #expect(try h.pool.collectGarbage().forgotten == ["brave-otter"])
+    }
+
+    @Test func creationRepairedAsHungLeavesNoSimulatorBehind() throws {
+        h.backend.onCreate = { [unowned h] in
+            h.backend.onCreate = nil
+            h.clock.advance(minutes: 61)
+            #expect((try? h.pool.collectGarbage())?.forgotten.count == 1)
+        }
+        let error = try #require(throws: SimctlHouseError.self) { try h.pool.acquire(AcquireRequest(spec: DeviceSpec())) }
+        #expect(error.exitCode == 5)
+        #expect(try h.state().devices.isEmpty)
+        #expect(try h.backend.devices().isEmpty)
+    }
+
+    @Test func reclaimRepairedAsHungLeavesNoSimulatorBehind() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        h.clock.advance(minutes: 31)
+        h.backend.onCreate = { [unowned h] in
+            h.backend.onCreate = nil
+            h.clock.advance(minutes: 61)
+            #expect((try? h.pool.collectGarbage())?.forgotten.count == 1)
+        }
+        #expect(try h.pool.collectGarbage().reclaimed == [device.name])
+        #expect(try h.state().devices.isEmpty)
+        #expect(try h.backend.devices().isEmpty)
+    }
+
+    @Test func failedForcedEraseKeepsTheLease() throws {
+        let device = try h.pool.acquire(AcquireRequest(holder: "agent-1"))
+        h.backend.failErase = true
+        #expect(throws: (any Error).self) { try h.pool.erase(device.name, force: true) }
+        let record = try #require(try h.state().devices.first)
+        #expect(record.status == .leased)
+        #expect(record.lease?.holder == "agent-1")
+        #expect(record.history.isEmpty)
+    }
+
+    @Test func repairHandsBackTheLeaseOfACrashedForcedErase() throws {
+        let device = try h.pool.acquire(AcquireRequest(holder: "agent-1"))
+        let crashing = h.pool(processID: 4242)
+        h.backend.onErase = { [unowned h] in
+            h.backend.onErase = nil
+            h.scanner.exit(4242)
+            #expect((try? h.pool.collectGarbage())?.recovered == [device.name])
+        }
+        #expect(throws: SimctlHouseError.takenOver(device: device.name)) { try crashing.erase(device.name, force: true) }
+        let record = try #require(try h.state().devices.first)
+        #expect(record.status == .leased)
+        #expect(record.lease?.holder == "agent-1")
+    }
+
+    @Test func expiredUDIDIsNeverHandedOutWhileItsDeleteFails() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        let oldUDID = try #require(device.udid)
+        h.clock.advance(minutes: 31)
+        h.backend.failDelete = [device.name]
+        #expect(try h.pool(processID: 4242).collectGarbage().reclaimed == [device.name])
+        let record = try #require(try h.state().devices.first)
+        #expect(record.status == .provisioning)
+        #expect(record.udid == nil)
+        #expect(record.replacedUDID == oldUDID)
+        #expect(throws: SimctlHouseError.deviceNotFound(oldUDID)) { try h.pool.release(oldUDID) }
+        #expect(try h.pool.acquire(AcquireRequest(spec: DeviceSpec())).udid != oldUDID)
+
+        // Once the reclaiming process is gone, GC deletes the old simulator, retrying until it succeeds.
+        h.scanner.exit(4242)
+        #expect(try h.pool(processID: 4343).collectGarbage().forgotten == [record.name])
+        #expect(h.backend.device(oldUDID) != nil)
+        #expect(try h.state().devices.contains { $0.name == record.name })
+        h.backend.failDelete = []
+        h.scanner.exit(4343)
+        #expect(try h.pool.collectGarbage().forgotten == [record.name])
+        #expect(h.backend.device(oldUDID) == nil)
+        #expect(try !h.state().devices.contains { $0.name == record.name })
+        #expect(try h.state().retired.last?.reason == .abandoned)
+    }
+
+    @Test func idleShutdownHandsTheDeviceBackWithoutAClaim() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        try h.pool.release(device.name)
+        h.clock.advance(minutes: 16)
+        #expect(try h.pool.collectGarbage().shutDown == [device.name])
+        let record = try #require(try h.state().devices.first)
+        #expect(record.status == .available)
+        #expect(record.claim == nil)
+    }
+
+    private func addRecord(_ name: String, _ status: PoolDevice.Status, claim: Claim?) throws {
+        let now = h.clock.now
+        try StateStore(paths: HousePaths(root: h.root)).transaction { state in
+            state.devices.append(
+                PoolDevice(
+                    name: name, udid: nil, deviceTypeIdentifier: "type.iPhone-18-Pro", runtimeIdentifier: "rt.iOS-27-0", status: status, claim: claim,
+                    now: now))
+        }
     }
 }

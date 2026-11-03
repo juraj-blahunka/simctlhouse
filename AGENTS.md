@@ -32,12 +32,13 @@ scripts/smoke-test.sh TARBALL       # run a release tarball against real simulat
 
 - Never touch a simulator whose UDID is not in `state.json`.
   The user's own simulators are off limits.
-- Every state mutation goes through `StateStore.transaction` (flock + atomic write).
-  Never hold the lock across create, boot or shutdown; mark the device `provisioning` or `maintenance` instead.
+- Every state mutation goes through `StateStore.transaction` (flock + durable atomic write).
+  Never hold the lock across create, boot or shutdown; mark the device `provisioning` or `maintenance` with a claim (`PoolDevice.begin`) instead.
+  Finish that work through `Pool.finish(claim)`, never by looking the device up by name (see D28).
 - Take the live `simctl list` snapshot inside the transaction that acts on it.
 - Pool devices live in the default device set, because xcodebuild cannot see custom sets.
   Devices come from `simctl create` (see D6).
-- "Erase" means delete and create again, so the UDID changes.
+- `erase` wipes in place and keeps the UDID; lease expiry deletes and creates again, so the UDID changes (see D7).
 - An expired lease gets a new device name, so stale agents fail with exit code 3 instead of touching someone else's device.
 - Records never just disappear: removing a device goes through `PoolState.retire`, and ending a lease through `PoolDevice.endLease`, so `history` stays complete.
 - Every command that takes a device accepts its name or UDID (`DeviceRef.valueName` in the CLI).

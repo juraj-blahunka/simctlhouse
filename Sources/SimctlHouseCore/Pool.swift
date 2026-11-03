@@ -9,8 +9,9 @@ public struct PoolConfig: Sendable {
     /// Free booted devices are shut down after this much inactivity; 0 shuts them down on the next command.
     /// The `gc` command shuts them down regardless.
     public var idleShutdown: TimeInterval = 15 * 60
-    /// `provisioning` / `maintenance` records older than this were abandoned by a crashed process.
-    public var staleOperation: TimeInterval = 10 * 60
+    /// A `provisioning` / `maintenance` step is repaired as soon as the process running it is gone.
+    /// One still running after this long is presumed hung and repaired too; its claim keeps it from acting afterwards.
+    public var hungOperation: TimeInterval = 60 * 60
 
     public init() {}
 
@@ -98,6 +99,8 @@ public struct Pool: Sendable {
     public let backend: SimulatorBackend
     public let scanner: ProcessScanner
     public let config: PoolConfig
+    /// The process that holds the claims this pool takes.
+    let processID: Int32
     let now: @Sendable () -> Date
     let log: @Sendable (String) -> Void
 
@@ -106,6 +109,7 @@ public struct Pool: Sendable {
         backend: SimulatorBackend = Simctl(),
         scanner: ProcessScanner = PSProcessScanner(),
         config: PoolConfig = PoolConfig(),
+        processID: Int32 = getpid(),
         now: @escaping @Sendable () -> Date = { Date() },
         log: @escaping @Sendable (String) -> Void = { _ in }
     ) {
@@ -113,6 +117,7 @@ public struct Pool: Sendable {
         self.backend = backend
         self.scanner = scanner
         self.config = config
+        self.processID = processID
         self.now = now
         self.log = log
     }
@@ -130,7 +135,7 @@ public struct Pool: Sendable {
 
         enum Plan {
             case reuse(PoolDevice, booted: Bool)
-            case provision(name: String, ResolvedSpec)
+            case provision(name: String, ResolvedSpec, Claim)
         }
 
         let target: Target = try request.device.map(Target.device) ?? .spec(catalog.resolve(request.spec))
@@ -183,6 +188,7 @@ public struct Pool: Sendable {
                 }
                 if let pick, let index = state.index(of: pick.name) { return take(index) }
                 let name = freshName(state: state, live: live)
+                let claim = newClaim()
                 state.devices.append(
                     PoolDevice(
                         name: name,
@@ -191,10 +197,11 @@ public struct Pool: Sendable {
                         runtimeIdentifier: resolved.runtime.identifier,
                         status: .provisioning,
                         lease: lease,
+                        claim: claim,
                         now: now
                     )
                 )
-                return .provision(name: name, resolved)
+                return .provision(name: name, resolved, claim)
             }
         }
 
@@ -204,9 +211,9 @@ public struct Pool: Sendable {
         case .reuse(let reused, let booted):
             device = reused
             isBooted = booted
-        case .provision(let name, let resolved):
+        case .provision(let name, let resolved, let claim):
             log("No free \(resolved.deviceType.name) (iOS \(resolved.runtime.version)) in the pool; creating \(name). Its first boot takes about 30s.")
-            device = try provision(name: name, resolved: resolved, finalStatus: .leased)
+            device = try provision(name: name, resolved: resolved, claim: claim, finalStatus: .leased)
         }
 
         do {
@@ -216,10 +223,24 @@ public struct Pool: Sendable {
         } catch {
             // A device that cannot boot is useless to the next agent too; drop it instead of returning it to the pool.
             log("Boot of \(device.name) failed; removing it from the pool.")
-            try? destroy(device, reason: .failed)
+            try? dropAfterFailedBoot(leaseId: device.lease!.id)
             throw error
         }
         return try info(for: device.name, catalog: catalog)
+    }
+
+    /// Deletes a device whose boot failed, provided our lease still holds it: during a long boot the lease may have
+    /// expired and the device moved on, or been deleted with `--force`.
+    private func dropAfterFailedBoot(leaseId: String) throws {
+        let claim = newClaim()
+        let device = try store.transaction { state -> PoolDevice? in
+            guard let index = state.devices.firstIndex(where: { $0.lease?.id == leaseId }), state.devices[index].status == .leased else { return nil }
+            let now = now()
+            state.devices[index].endLease(.failed, at: now)
+            state.devices[index].begin(.maintenance, claim: claim, at: now)
+            return state.devices[index]
+        }
+        if let device { try destroy(device, claim: claim, reason: .failed) }
     }
 
     /// Returns a leased device to the pool. The device stays booted (and is not erased) for fast reuse.
@@ -269,6 +290,7 @@ public struct Pool: Sendable {
     public func create(_ spec: DeviceSpec) throws -> DeviceInfo {
         let catalog = try collectGarbageAndLoadCatalog()
         let resolved = try catalog.resolve(spec)
+        let claim = newClaim()
         let name = try store.transaction { state -> String in
             let name = freshName(state: state, live: try liveDevices())
             state.devices.append(
@@ -278,66 +300,89 @@ public struct Pool: Sendable {
                     deviceTypeIdentifier: resolved.deviceType.identifier,
                     runtimeIdentifier: resolved.runtime.identifier,
                     status: .provisioning,
+                    claim: claim,
                     now: now()
                 )
             )
             return name
         }
-        let device = try provision(name: name, resolved: resolved, finalStatus: .available)
+        let device = try provision(name: name, resolved: resolved, claim: claim, finalStatus: .available)
         return try info(for: device.name, catalog: catalog)
     }
 
     /// Shuts down and deletes pool devices. Leased devices require `force`.
     public func delete(_ refs: [String], force: Bool) throws -> [String] {
         try collectGarbage()
-        let targets = try store.transaction { state -> [PoolDevice] in
-            let indices = try refs.map { ref -> Int in
+        return try delete(force: force) { state in
+            try refs.map { ref in
                 guard let index = state.index(of: ref) else { throw SimctlHouseError.deviceNotFound(ref) }
-                try ensureMutable(state.devices[index], force: force)
                 return index
             }
-            for index in indices { state.devices[index].transition(to: .maintenance, at: now()) }
-            return indices.map { state.devices[$0] }
         }
-        for device in targets {
-            try destroy(device, reason: .deleted)
-            log("Deleted \(device.name).")
-        }
-        return targets.map(\.name)
     }
 
     public func deleteAll(force: Bool) throws -> [String] {
-        try delete(try store.snapshot().devices.map(\.name), force: force)
+        try collectGarbage()
+        return try delete(force: force) { state in Array(state.devices.indices) }
+    }
+
+    /// `select` picks the devices inside the transaction that claims them, so what is deleted is what was selected.
+    /// Every device is attempted; a failure hands that device back as it was, lease included, and is rethrown at the end.
+    private func delete(force: Bool, select: (PoolState) throws -> [Int]) throws -> [String] {
+        let targets = try store.transaction { state -> [(device: PoolDevice, claim: Claim)] in
+            var seen: Set<Int> = []
+            let indices = try select(state).filter { seen.insert($0).inserted }
+            for index in indices { try ensureMutable(state.devices[index], force: force) }
+            let now = now()
+            return indices.map { index in
+                // The lease ends only once the device is gone, when `destroy` retires it.
+                let claim = newClaim()
+                state.devices[index].begin(.maintenance, claim: claim, at: now)
+                return (state.devices[index], claim)
+            }
+        }
+        var firstError: Error?
+        for (device, claim) in targets {
+            do {
+                try destroy(device, claim: claim, reason: .deleted)
+                log("Deleted \(device.name).")
+            } catch {
+                // If the simulator is gone after all, the next GC retires it as vanished.
+                log("Deleting \(device.name) failed; handing it back.")
+                _ = try? finish(claim) { state, index in state.devices[index].restore(at: now()) }
+                firstError = firstError ?? error
+            }
+        }
+        if let firstError { throw firstError }
+        return targets.map(\.device.name)
     }
 
     /// Wipes a device back to a pristine, shut down state with `simctl erase`. Keeps the name and the UDID.
     public func erase(_ ref: String, force: Bool) throws -> DeviceInfo {
         try collectGarbage()
+        let claim = newClaim()
         let device = try store.transaction { state -> PoolDevice in
             guard let index = state.index(of: ref) else { throw SimctlHouseError.deviceNotFound(ref) }
             try ensureMutable(state.devices[index], force: force)
-            let now = now()
-            state.devices[index].endLease(.erased, at: now)
-            state.devices[index].transition(to: .maintenance, at: now)
+            // A forced erase ends the lease only once the wipe is done.
+            state.devices[index].begin(.maintenance, claim: claim, at: now())
             return state.devices[index]
         }
         do {
             try backend.shutdown(udid: device.udid!)
             try backend.erase(udid: device.udid!)
         } catch {
-            // Back to the pool either way; if the simulator is gone, the next GC retires it as vanished.
-            try? store.transaction { state in
-                guard let index = state.index(of: device.name) else { return }
-                state.devices[index].transition(to: .available, at: now())
-            }
+            // Handed back as it was; if the simulator is gone, the next GC retires it as vanished.
+            _ = try? finish(claim) { state, index in state.devices[index].restore(at: now()) }
             throw error
         }
-        try store.transaction { state in
-            guard let index = state.index(of: device.name) else { return }
+        let finished: Void? = try finish(claim) { state, index in
             let now = now()
+            state.devices[index].endLease(.erased, at: now)
             state.devices[index].transition(to: .available, at: now)
             state.devices[index].lastActivityAt = now
         }
+        guard finished != nil else { throw SimctlHouseError.takenOver(device: device.name) }
         return try info(for: device.name)
     }
 
@@ -412,9 +457,9 @@ public struct Pool: Sendable {
     /// so a caller can use it instead of listing devices again.
     private func runGarbageCollection(shutDownAllFree: Bool = false) throws -> (report: GCReport, untouchedLive: [String: SimDevice]?) {
         enum Job {
-            case reclaim(PoolDevice, newName: String)
-            case shutdown(PoolDevice)
-            case deleteOrphan(udid: String)
+            case reclaim(PoolDevice, newName: String, Claim)
+            case shutdown(PoolDevice, Claim)
+            case discard(PoolDevice, udids: [String], Claim)
         }
 
         var report = GCReport()
@@ -427,19 +472,27 @@ public struct Pool: Sendable {
             let foreign = scanner.udidsInUse(among: idleCandidates.compactMap(\.udid))
 
             for var device in state.devices {
-                let isStale = now.timeIntervalSince(device.statusChangedAt) > config.staleOperation
                 switch device.status {
                 case .provisioning:
-                    guard isStale else { break }
-                    // The creating process died midway. Remove any half-made simulator carrying our name.
-                    for orphan in live.values where orphan.name == device.name { jobs.append(.deleteOrphan(udid: orphan.udid)) }
-                    state.retire(device, reason: .abandoned, at: now)
+                    guard isAbandoned(device, now: now) else { break }
+                    // The creating process died midway. Delete what it left: the expired simulator a reclaim had yet
+                    // to delete, and any half-made simulator carrying our name. The record stays until they are gone,
+                    // so a failed delete is retried rather than leaving a simulator nothing tracks.
                     report.forgotten.append(device.name)
+                    let leftovers = live.values.filter { $0.udid == device.replacedUDID || $0.name == device.name }.map(\.udid)
+                    guard leftovers.isEmpty else {
+                        let claim = newClaim()
+                        device.begin(.provisioning, claim: claim, at: now)
+                        jobs.append(.discard(device, udids: leftovers, claim))
+                        keep.append(device)
+                        continue
+                    }
+                    state.retire(device, reason: .abandoned, at: now)
                     continue
                 case .maintenance:
-                    guard isStale else { break }
+                    guard isAbandoned(device, now: now) else { break }
                     if let udid = device.udid, live[udid] != nil {
-                        device.transition(to: .available, at: now)
+                        device.restore(at: now)
                         report.recovered.append(device.name)
                     } else {
                         state.retire(device, reason: .vanished, at: now)
@@ -457,22 +510,28 @@ public struct Pool: Sendable {
 
                 if device.status == .leased, let lease = device.lease, lease.expiresAt <= now {
                     // Rename right away so a stale agent can no longer address the device by its old name.
-                    // The old identity and its lease history move to `retired`; the erased device starts fresh.
+                    // The old identity and its lease history move to `retired`; the re-created device starts fresh.
+                    // Until then the record is `provisioning` and the old UDID sits in `replacedUDID`,
+                    // so neither the old name nor the old UDID reaches it, and it is never handed out.
                     let newName = freshName(state: state, live: live, alsoAvoiding: keep.map(\.name))
                     state.retire(device, reason: .expired, at: now)
                     device.lease = nil
                     device.history = []
                     device.createdAt = now
-                    device.transition(to: .maintenance, at: now)
-                    jobs.append(.reclaim(device, newName: newName))
+                    device.replacedUDID = device.udid
+                    device.udid = nil
+                    let claim = newClaim()
+                    device.begin(.provisioning, claim: claim, at: now)
+                    jobs.append(.reclaim(device, newName: newName, claim))
                     report.reclaimed.append(device.name)
                     device.name = newName
                 } else if device.status == .available, let udid = device.udid, live[udid]?.isBooted == true {
                     if foreign.contains(udid.uppercased()) {
                         device.lastActivityAt = now
                     } else if shutDownAllFree || now.timeIntervalSince(device.lastActivityAt) >= config.idleShutdown {
-                        device.transition(to: .maintenance, at: now)
-                        jobs.append(.shutdown(device))
+                        let claim = newClaim()
+                        device.begin(.maintenance, claim: claim, at: now)
+                        jobs.append(.shutdown(device, claim))
                         report.shutDown.append(device.name)
                     }
                 }
@@ -485,26 +544,29 @@ public struct Pool: Sendable {
         // Each job touches a different simulator, so they run in parallel.
         concurrentForEach(jobs) { job in
             switch job {
-            case .reclaim(let device, let newName):
+            case .reclaim(let device, let newName, let claim):
                 log("Lease on \(device.name) expired; erasing it and returning it to the pool as \(newName).")
                 do {
-                    try recycle(device, as: newName)
+                    try recycle(device, as: newName, claim: claim)
                 } catch {
-                    log("Reclaiming \(newName) failed: \(error). It will be retried later.")
+                    log("Reclaiming \(newName) failed: \(error).")
                 }
-            case .shutdown(let device):
+            case .shutdown(let device, let claim):
                 log(shutDownAllFree ? "Shutting down \(device.name), which is free." : "\(device.name) has been idle; shutting it down.")
                 do {
                     try backend.shutdown(udid: device.udid!)
-                    try store.transaction { state in
-                        guard let index = state.index(of: device.name), state.devices[index].status == .maintenance else { return }
-                        state.devices[index].transition(to: .available, at: now())
-                    }
                 } catch {
                     log("Shutting down \(device.name) failed: \(error). It will be retried later.")
                 }
-            case .deleteOrphan(let udid):
-                try? backend.delete(udid: udid)
+                // Free again either way; a failed shutdown leaves it booted and idle, so the next GC retries.
+                _ = try? finish(claim) { state, index in state.devices[index].transition(to: .available, at: now()) }
+            case .discard(let device, let udids, let claim):
+                do {
+                    for udid in udids { try backend.delete(udid: udid) }
+                    _ = try finish(claim) { state, index in state.retire(at: index, reason: .abandoned, at: now()) }
+                } catch {
+                    log("Deleting what was left of \(device.name) failed: \(error). It will be retried later.")
+                }
             }
         }
         return (report, jobs.isEmpty ? live : nil)
@@ -521,61 +583,106 @@ public struct Pool: Sendable {
         }
     }
 
+    /// A claim held by this process, for a record about to enter `provisioning` or `maintenance`.
+    private func newClaim() -> Claim {
+        Claim(id: UUID().uuidString.lowercased(), pid: processID, processStartedAt: scanner.startTime(of: processID))
+    }
+
+    /// Runs `body` under the lock on the record `claim` was taken on. Returns nil without running it when no record
+    /// carries the claim any more: GC judged the work abandoned and repaired the record, so it is no longer ours to change.
+    private func finish<T>(_ claim: Claim, _ body: (inout PoolState, Int) throws -> T) throws -> T? {
+        try store.transaction { state in
+            guard let index = state.devices.firstIndex(where: { $0.claim?.id == claim.id }) else { return nil }
+            return try body(&state, index)
+        }
+    }
+
+    /// A `provisioning` or `maintenance` record is abandoned once the process holding its claim is gone,
+    /// or, for a hung process, once the work has run longer than `config.hungOperation`.
+    /// A record without a claim was written by an older simctlhouse that may still be at work, so only the timeout applies.
+    private func isAbandoned(_ device: PoolDevice, now: Date) -> Bool {
+        if now.timeIntervalSince(device.statusChangedAt) > config.hungOperation { return true }
+        guard let claim = device.claim else { return false }
+        guard let started = scanner.startTime(of: claim.pid) else { return true }
+        return claim.processStartedAt.map { $0 != started } ?? false
+    }
+
     /// Creates the simulator for a `provisioning` record and moves it to `finalStatus`.
-    private func provision(name: String, resolved: ResolvedSpec, finalStatus: PoolDevice.Status) throws -> PoolDevice {
+    private func provision(name: String, resolved: ResolvedSpec, claim: Claim, finalStatus: PoolDevice.Status) throws -> PoolDevice {
         let udid: String
         do {
             udid = try backend.create(name: name, deviceType: resolved.deviceType.identifier, runtime: resolved.runtime.identifier)
         } catch {
-            try? store.transaction { state in state.retire(named: name, reason: .failed, at: now()) }
+            _ = try? finish(claim) { state, index in state.retire(at: index, reason: .failed, at: now()) }
             throw error
         }
-        return try store.transaction { state -> PoolDevice in
-            guard let index = state.index(of: name) else {
-                try? backend.delete(udid: udid)
-                throw SimctlHouseError.io("Provisioning record for \(name) disappeared; was the state file edited?")
-            }
+        return try adopt(udid: udid, claim: claim, name: name) { device in
             let now = now()
-            state.devices[index].udid = udid
-            state.devices[index].transition(to: finalStatus, at: now)
-            state.devices[index].lastActivityAt = now
-            return state.devices[index]
+            device.transition(to: finalStatus, at: now)
+            device.lastActivityAt = now
         }
     }
 
     /// Replaces a reclaimed device with a newly created one and returns it to the pool shut down.
     /// Delete and create, rather than `simctl erase`, so the UDID changes and a stale agent cannot reach the device.
-    private func recycle(_ device: PoolDevice, as newName: String) throws {
-        let catalog = try Catalog(backend: backend)
-        guard let type = catalog.deviceType(identifier: device.deviceTypeIdentifier),
-            let runtime = catalog.runtime(identifier: device.runtimeIdentifier), runtime.isAvailable
-        else {
-            // The runtime was uninstalled; the device cannot be rebuilt, so retire it.
-            try destroy(device, currentName: newName, reason: .runtimeRemoved)
-            return
-        }
-        if let udid = device.udid {
+    /// If deleting the old simulator fails, the record stays `provisioning`, and GC deletes it once this process is gone.
+    private func recycle(_ device: PoolDevice, as newName: String, claim: Claim) throws {
+        if let udid = device.replacedUDID {
             try? backend.shutdown(udid: udid)
             try deleteIfPresent(udid: udid)
         }
-        let udid = try backend.create(name: newName, deviceType: type.identifier, runtime: runtime.identifier)
-        try store.transaction { state in
-            guard let index = state.index(of: newName) else { return }
+        let udid: String
+        do {
+            let catalog = try Catalog(backend: backend)
+            guard let type = catalog.deviceType(identifier: device.deviceTypeIdentifier),
+                let runtime = catalog.runtime(identifier: device.runtimeIdentifier), runtime.isAvailable
+            else {
+                // The runtime was uninstalled; the device cannot be rebuilt, so retire it.
+                _ = try finish(claim) { state, index in state.retire(at: index, reason: .runtimeRemoved, at: now()) }
+                return
+            }
+            udid = try backend.create(name: newName, deviceType: type.identifier, runtime: runtime.identifier)
+        } catch {
+            _ = try? finish(claim) { state, index in state.retire(at: index, reason: .failed, at: now()) }
+            throw error
+        }
+        _ = try adopt(udid: udid, claim: claim, name: newName) { device in
             let now = now()
-            state.devices[index].udid = udid
-            state.devices[index].lease = nil
-            state.devices[index].transition(to: .available, at: now)
-            state.devices[index].lastActivityAt = now
+            device.transition(to: .available, at: now)
+            device.lastActivityAt = now
         }
     }
 
-    /// Shuts down and deletes the simulator and retires its record.
-    private func destroy(_ device: PoolDevice, currentName: String? = nil, reason: EndReason) throws {
+    /// Records a simulator just created for the record `claim` is on, then applies `body` to the record.
+    /// If the record is no longer ours, or recording fails, nothing in the pool refers to the simulator,
+    /// and nothing would ever delete it, so it is deleted here.
+    private func adopt(udid: String, claim: Claim, name: String, _ body: (inout PoolDevice) -> Void) throws -> PoolDevice {
+        let adopted: PoolDevice?
+        do {
+            adopted = try finish(claim) { state, index in
+                state.devices[index].udid = udid
+                state.devices[index].replacedUDID = nil
+                body(&state.devices[index])
+                return state.devices[index]
+            }
+        } catch {
+            try? backend.delete(udid: udid)
+            throw error
+        }
+        guard let adopted else {
+            try? backend.delete(udid: udid)
+            throw SimctlHouseError.takenOver(device: name)
+        }
+        return adopted
+    }
+
+    /// Shuts down and deletes the simulator of a device this process claimed, then retires its record.
+    private func destroy(_ device: PoolDevice, claim: Claim, reason: EndReason) throws {
         if let udid = device.udid {
             try? backend.shutdown(udid: udid)
             try deleteIfPresent(udid: udid)
         }
-        try store.transaction { state in state.retire(named: currentName ?? device.name, reason: reason, at: now()) }
+        _ = try finish(claim) { state, index in state.retire(at: index, reason: reason, at: now()) }
     }
 
     private func deleteIfPresent(udid: String) throws {

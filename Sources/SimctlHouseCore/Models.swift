@@ -1,6 +1,6 @@
 import Foundation
 
-/// Persisted pool state. Lives in `<home>/state.json` and is only mutated under `StateStore.withLock`.
+/// Persisted pool state. Lives in `<home>/state.json` and is only mutated under `StateStore.transaction`.
 public struct PoolState: Codable, Equatable, Sendable {
     public static let currentVersion = 1
     /// How many deleted, vanished or reclaimed devices `history` can still report on.
@@ -41,9 +41,8 @@ public struct PoolState: Codable, Equatable, Sendable {
         if retired.count > Self.retiredLimit { retired.removeFirst(retired.count - Self.retiredLimit) }
     }
 
-    /// Removes the record named `name`, if any, and retires it.
-    mutating func retire(named name: String, reason: EndReason, at now: Date) {
-        guard let index = index(of: name) else { return }
+    /// Removes the record at `index` and retires it.
+    mutating func retire(at index: Int, reason: EndReason, at now: Date) {
         retire(devices.remove(at: index), reason: reason, at: now)
     }
 }
@@ -53,25 +52,31 @@ public struct PoolDevice: Codable, Equatable, Sendable {
     public static let historyLimit = 5
 
     public enum Status: String, Codable, CaseIterable, Sendable {
-        /// Name reserved, simulator is being created. `udid` may still be nil.
+        /// Name reserved, simulator is being created, or re-created after an expired lease. `udid` is nil until it exists.
+        /// Carries a `claim`.
         case provisioning
         /// In the pool, free to acquire.
         case available
         /// Held by an agent until `lease.expiresAt`.
         case leased
-        /// simctlhouse is shutting down, reclaiming or erasing the device. Not acquirable.
+        /// simctlhouse is shutting down, erasing or deleting the device. Not acquirable. Carries a `claim`.
         case maintenance
     }
 
     /// Two-word identifier, e.g. `amber-falcon`. Also the simulator's display name.
     public var name: String
     public var udid: String?
+    /// While a reclaim re-creates the device: the simulator of the expired lease, not yet deleted.
+    /// Kept out of `udid` so nothing can look the record up by it or hand it out.
+    public var replacedUDID: String?
     public var deviceTypeIdentifier: String
     public var runtimeIdentifier: String
     public var status: Status
     public var lease: Lease?
+    /// The process working on the device while it is `provisioning` or `maintenance`; nil otherwise.
+    public var claim: Claim?
     public var createdAt: Date
-    /// When status last changed. Used to detect operations abandoned by a crashed process.
+    /// When status last changed. Used to detect operations stuck in a hung process.
     public var statusChangedAt: Date
     /// Last moment an agent held or released the device. Drives the idle shutdown.
     public var lastActivityAt: Date
@@ -85,6 +90,7 @@ public struct PoolDevice: Codable, Equatable, Sendable {
         runtimeIdentifier: String,
         status: Status,
         lease: Lease? = nil,
+        claim: Claim? = nil,
         now: Date
     ) {
         self.name = name
@@ -93,15 +99,31 @@ public struct PoolDevice: Codable, Equatable, Sendable {
         self.runtimeIdentifier = runtimeIdentifier
         self.status = status
         self.lease = lease
+        self.claim = claim
         self.createdAt = now
         self.statusChangedAt = now
         self.lastActivityAt = now
         self.history = []
     }
 
+    /// Moves to `provisioning` or `maintenance` on behalf of the process holding `claim`.
+    mutating func begin(_ status: Status, claim: Claim, at now: Date) {
+        self.status = status
+        self.statusChangedAt = now
+        self.claim = claim
+    }
+
+    /// Moves to `available` or `leased`, ending any claim.
     mutating func transition(to status: Status, at now: Date) {
         self.status = status
         self.statusChangedAt = now
+        self.claim = nil
+    }
+
+    /// Ends a claim whose work did not happen: back to `leased` while the lease still holds it, otherwise `available`.
+    /// An expired lease is then reclaimed by GC as usual.
+    mutating func restore(at now: Date) {
+        transition(to: lease == nil ? .available : .leased, at: now)
     }
 
     /// Clears the current lease, if any, and records how it ended.
@@ -111,6 +133,17 @@ public struct PoolDevice: Codable, Equatable, Sendable {
         if history.count > Self.historyLimit { history.removeFirst(history.count - Self.historyLimit) }
         self.lease = nil
     }
+}
+
+/// Marks a `provisioning` or `maintenance` record as being worked on by one process, outside the lock.
+/// GC repairs the record only once that process is gone, or has run longer than `PoolConfig.hungOperation`,
+/// and the process finishes its work only if the record still carries the claim, so late work never overwrites a repair.
+/// A `simctl` call still running when its process is judged hung does act on the simulator, though (see D28).
+public struct Claim: Codable, Equatable, Sendable {
+    public var id: String
+    public var pid: Int32
+    /// When `pid` started, in whole seconds, so a recycled pid is not mistaken for the owner.
+    public var processStartedAt: Date?
 }
 
 public struct Lease: Codable, Equatable, Sendable {

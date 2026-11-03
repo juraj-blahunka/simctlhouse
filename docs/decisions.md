@@ -32,6 +32,8 @@ Words that read like pool states (`busy`, `free`, `idle`) are excluded to avoid 
 
 State lives in `~/.simctlhouse/state.json`.
 Every mutation takes an exclusive `flock` on `state.lock`, reads, modifies, and writes through a temp file plus atomic rename.
+The temp file is flushed with `F_FULLFSYNC` before the rename, because a power loss could otherwise leave an empty `state.json`, and an empty or unreadable registry orphans every device.
+That costs a few milliseconds per write, small next to the `simctl` calls every command makes.
 The kernel releases `flock` when a process dies, so a crashed agent never wedges the pool.
 The lock is held for milliseconds; slow work (create, boot, shutdown, delete) happens outside it, protected by the `provisioning` and `maintenance` statuses.
 SQLite was rejected as more machinery than a few hundred records need (devices plus their lease history, D16), and harder to inspect or repair by hand.
@@ -225,3 +227,16 @@ The version stays hardcoded in `SimctlHouse.swift`; `scripts/release.sh` refuses
 The script verifies its own output by installing the tarball into a temporary directory and running `skill install` from it.
 Trade-off: a bare binary cannot be stapled, so Gatekeeper checks notarization online on first run; Homebrew does not quarantine formula downloads, so this only matters for manual downloads.
 
+## D28. In-flight work is claimed by a process
+
+Work done outside the lock (create, shutdown, erase, re-create, delete) puts the device in `provisioning` or `maintenance` with a claim: a random id, the pid, and the process start time.
+The transaction that finishes the work looks the record up by claim id and changes nothing if the claim is gone.
+GC repairs a claimed record once the claiming process has exited, and after an hour even if it has not.
+Previously GC repaired every such record after 10 minutes and the finishing transaction looked the device up by name, so a slow `erase` on a loaded machine could set a device someone had leased in the meantime back to `available`, and the next `acquire` leased it twice.
+The start time guards against pid reuse; process liveness comes from `sysctl(KERN_PROC_PID)`, which is cheap enough to ask inside the lock.
+The hour stays as a backstop because a hung `simctl` would otherwise hold a device forever.
+The claim keeps the late process from changing the record, and the command that lost its claim fails with exit code 5.
+It cannot stop the late `simctl` call itself: a hung `erase`, `shutdown` or `delete` that completes after the takeover still acts on the simulator, which may have a new holder by then.
+Accepted, since it takes a `simctl` call stuck for over an hour.
+Records written by an older version carry no claim and are repaired only after the hour.
+Trade-off: a device whose simctlhouse process hangs stays unusable for up to an hour instead of 10 minutes.

@@ -117,7 +117,7 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 | 2 | Unknown or unsupported model, or no runtime matches |
 | 3 | Device not found (never created by simctlhouse, deleted, or reclaimed after lease expiry) |
 | 4 | Lease ID mismatch, or `renew` of a device that is not leased |
-| 5 | Device is leased, busy, or used by another process (`acquire <name>`, `delete` / `erase` without `--force`) |
+| 5 | Device is leased, busy, or used by another process (`acquire <name>`, `delete` / `erase` without `--force`), or was taken over because the command ran for over an hour |
 | 6 | `skill install` found no skill next to the binary, or something other than a simctlhouse link is in the way |
 | 64 | Invalid command-line usage, or an invalid `SIMCTLHOUSE_*_SECONDS` value |
 
@@ -128,7 +128,7 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 - `simctlhouse history <name|udid>` shows who held a device and how each lease ended.
 - `cat ~/.simctlhouse/state.json` shows the raw registry.
 - `simctlhouse gc --json` reclaims expired leases and shuts down every free booted device now, without waiting for the 15-minute idle timeout, and reports what it did.
-- A device stuck in `maintenance` or `provisioning` is repaired automatically 10 minutes after the crash that left it there.
+- A device stuck in `maintenance` or `provisioning` is repaired automatically by the next command once the process that left it there has exited, or after an hour if that process hangs.
 - Start from scratch: `simctlhouse delete --all --force`.
 
 ## Run the tests

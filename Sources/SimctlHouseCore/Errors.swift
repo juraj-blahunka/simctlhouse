@@ -11,6 +11,7 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
     case deviceLeased(device: String, holder: String?)
     case deviceBusy(device: String, status: PoolDevice.Status)
     case deviceInUse(device: String)
+    case takenOver(device: String)
     case invalidEnvironment(variable: String, value: String, expected: String)
     case skillNotShipped(executable: String)
     case skillConflict(paths: [String])
@@ -25,7 +26,7 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
         case .unknownModel, .unsupportedModel, .noRuntime: 2
         case .deviceNotFound: 3
         case .leaseMismatch, .notLeased: 4
-        case .deviceLeased, .deviceBusy, .deviceInUse: 5
+        case .deviceLeased, .deviceBusy, .deviceInUse, .takenOver: 5
         case .skillNotShipped, .skillConflict, .notASkill: 6
         case .corruptState, .io: 1
         case .invalidEnvironment: 64
@@ -58,6 +59,9 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
             "\(device) is busy (\(status.rawValue)). Try again shortly."
         case .deviceInUse(let device):
             "\(device) is free, but another process is using it (its UDID appears in a running command). Pick another device."
+        case .takenOver(let device):
+            "\(device) was taken over while this command worked on it: it ran so long that another simctlhouse process "
+                + "judged it hung and repaired it. Run `simctlhouse list` and try again."
         case .invalidEnvironment(let variable, let value, let expected):
             "\(variable)='\(value)' is invalid; expected \(expected)."
         case .skillNotShipped(let executable):

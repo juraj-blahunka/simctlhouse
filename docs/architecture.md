@@ -8,6 +8,8 @@ There is no daemon: every invocation reads the shared state under a file lock, d
 
 All state lives in `~/.simctlhouse` (override with `SIMCTLHOUSE_HOME`).
 `state.json` is the registry of every device simctlhouse owns, and `state.lock` is the `flock` target that guards it.
+`state.json` is written to `state.json.tmp`, flushed to the drive with `F_FULLFSYNC`, and renamed into place, so it is never seen half-written or empty, even after a power loss.
+A missing `state.json` is an empty pool; one that cannot be read or decoded fails the command rather than being treated as empty, which would orphan every device on the next write.
 
 ```json
 {
@@ -47,23 +49,23 @@ The CoreSimulator state (`Booted` / `Shutdown`) is never stored; it is read live
 
 ```
              acquire (no free match)
-   (none) ───────────────────────────► provisioning ─create done──► leased
+   (none) ───────────────────────────► provisioning ─create done──► leased ──lease expired──► provisioning
+                                                                     │  ▲                      (re-create)
+                                                        release      │  │ acquire (free match)      │
+                                                                     ▼  │                           │
+             create ─► provisioning ─create done──────────────────► available ◄──re-create done─────┘
                                                                      │  ▲
-                                                        release      │  │ acquire (free match)
-                                                                     ▼  │
-             create ─► provisioning ─create done──────────────────► available
-                                                                     │  ▲
-                              idle 15 min (booted) / lease expired   │  │ shutdown or re-create done
+                              idle 15 min (booted)                   │  │ shutdown or erase done
                               / erase / delete                       ▼  │
                                                                   maintenance ──delete──► (gone)
 ```
 
 | Status | Meaning | Acquirable |
 | --- | --- | --- |
-| `provisioning` | Name reserved, simulator being created | no |
+| `provisioning` | Name reserved, simulator being created, or re-created after an expired lease; carries a claim | no |
 | `available` | Free; booted (recently used) or shut down | yes |
 | `leased` | Held by an agent until `lease.expiresAt` | no |
-| `maintenance` | simctlhouse is shutting down, re-creating or deleting it | no |
+| `maintenance` | simctlhouse is shutting down, erasing or deleting it; carries a claim | no |
 
 ## Concurrency
 
@@ -72,19 +74,32 @@ The live `simctl list` snapshot is taken inside the same transaction, so a devic
 Slow work (create, boot, shutdown, delete) runs outside the lock.
 Before releasing the lock, the transaction moves the device to `provisioning` or `maintenance`, so no other process picks it, and a second short transaction sets its final status afterwards.
 
-If a process crashes midway, the record stays in `provisioning` or `maintenance`.
-GC treats such a record as abandoned after 10 minutes:
+The first transaction stamps the record with a claim: a random id plus the pid and start time of the process doing the work.
+The second transaction finds the record by that claim id (`Pool.finish`), never by name, and does nothing if no record carries it any more.
+So work that outlives its claim can never overwrite what happened to the record in the meantime.
+A simulator created for a record that is no longer ours is deleted on the spot, since nothing else would ever touch it.
+A forced `erase` or `delete` of a leased device keeps the lease until the work succeeds; if it fails or is repaired, the device goes back to `leased`.
 
-- `provisioning`: the record is retired and any simulator carrying its name is deleted.
-- `maintenance`: the device becomes `available` again if its simulator still exists, otherwise it is retired.
+If a process crashes midway, the record stays in `provisioning` or `maintenance`.
+GC treats such a record as abandoned as soon as the process named in its claim is gone (or its pid now belongs to a process started at another time), and after an hour even if it is still running, as a backstop for a hung process:
+
+- `provisioning`: any simulator carrying its name, and the expired simulator a reclaim had yet to delete (`replacedUDID`), are deleted, then the record is retired.
+  The record stays until those deletes succeed, so a failed one is retried by a later GC instead of leaving a simulator nothing tracks.
+- `maintenance`: the device goes back to `leased` (if it still has a lease) or `available` if its simulator still exists, otherwise it is retired.
+
+A slow but live process is never taken over before that hour, so a loaded machine cannot make two processes act on one device.
+After the hour, only the record is protected: a hung `simctl erase`, `shutdown` or `delete` that completes after the takeover still acts on the simulator, which may have a new holder by then.
+Within one process, GC's parallel jobs each open their own descriptor on `state.lock`; `flock` locks belong to the open file, so the jobs exclude each other like separate processes do.
+Transactions never nest, which would deadlock on that same property.
 
 ## Garbage collection
 
 GC runs at the start of every command:
 
 1. Retires records whose simulator was deleted outside simctlhouse.
-2. Repairs abandoned `provisioning` and `maintenance` records.
-3. Reclaims expired leases: retires the old name with its history, renames the record, deletes and re-creates the simulator, and returns it `available` and shut down.
+2. Repairs abandoned `provisioning` and `maintenance` records (see Concurrency).
+3. Reclaims expired leases: retires the old name with its history, renames the record and moves it to `provisioning` with the old UDID set aside in `replacedUDID`, deletes and re-creates the simulator, and returns it `available` and shut down.
+   Neither the old name nor the old UDID reaches the record from the moment of expiry, and the old simulator is never handed out, even if deleting it fails.
 4. Shuts down free devices that have been booted and inactive for 15 minutes, unless a foreign process references them.
    The explicit `gc` command shuts down every free booted device without waiting.
 
