@@ -53,9 +53,11 @@ final class FileLock {
 /// only for the read-modify-write. Slow simulator work (create, boot, shutdown) happens outside of it.
 public struct StateStore: Sendable {
     public let paths: HousePaths
+    let log: @Sendable (String) -> Void
 
-    public init(paths: HousePaths) {
+    public init(paths: HousePaths, log: @escaping @Sendable (String) -> Void = { _ in }) {
         self.paths = paths
+        self.log = log
     }
 
     public func transaction<T>(_ body: (inout PoolState) throws -> T) throws -> T {
@@ -84,16 +86,50 @@ public struct StateStore: Sendable {
             // Reading anything else as an empty pool would overwrite the registry on the next save and orphan every device.
             throw SimctlHouseError.io("Cannot read \(paths.stateFile.path): \(error.localizedDescription)")
         }
+        // Another version's state is not corrupt: resetting it would wipe the pool of a newer simctlhouse.
+        if let version = (try? Self.decoder.decode(Header.self, from: data))?.version, version != PoolState.currentVersion {
+            throw SimctlHouseError.corruptState("unsupported version \(version) in \(paths.stateFile.path)")
+        }
         do {
-            let state = try Self.decoder.decode(PoolState.self, from: data)
-            guard state.version == PoolState.currentVersion else {
-                throw SimctlHouseError.corruptState("unsupported version \(state.version) in \(paths.stateFile.path)")
-            }
-            return state
-        } catch let error as SimctlHouseError {
-            throw error
+            return try Self.decoder.decode(PoolState.self, from: data)
         } catch {
-            throw SimctlHouseError.corruptState("\(paths.stateFile.path): \(error)")
+            return try reset(corrupt: data, error: error)
+        }
+    }
+
+    private struct Header: Decodable {
+        var version: Int?
+    }
+
+    /// Moves a corrupt `state.json` aside and starts with an empty pool, so one bad write cannot wedge every command.
+    /// Simulators the corrupt file listed are no longer managed; the moved file keeps their UDIDs for deleting by hand.
+    private func reset(corrupt data: Data, error: Error) throws -> PoolState {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let stem = "state.json.corrupt-\(formatter.string(from: Date()))"
+        // Never overwrite an earlier backup, even from a reset in the same second.
+        let backup = (0...).lazy.map { paths.root.appending(path: $0 == 0 ? stem : "\(stem)-\($0)") }
+            .first { !FileManager.default.fileExists(atPath: $0.path) }!
+        guard rename(paths.stateFile.path, backup.path) == 0 else { throw Self.posixError("Cannot move corrupt \(paths.stateFile.path) aside") }
+        log(
+            "warning: \(paths.stateFile.path) was corrupt (\(Self.reason(error))); moved it to \(backup.lastPathComponent) and started an empty pool. "
+                + "The simulators it listed are no longer managed; their UDIDs are in that file, for `xcrun simctl delete <udid>`.")
+        return PoolState()
+    }
+
+    /// One line on why decoding failed, instead of the nested `DecodingError` dump.
+    private static func reason(_ error: Error) -> String {
+        func path(_ keys: [CodingKey]) -> String {
+            keys.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
+        }
+        switch error {
+        case DecodingError.dataCorrupted(let context) where context.codingPath.isEmpty: return "not valid JSON"
+        case DecodingError.dataCorrupted(let context): return "invalid value at \(path(context.codingPath))"
+        case DecodingError.keyNotFound(let key, let context): return "missing \(path(context.codingPath + [key]))"
+        case DecodingError.typeMismatch(_, let context), DecodingError.valueNotFound(_, let context):
+            return "unexpected value at \(path(context.codingPath))"
+        default: return error.localizedDescription
         }
     }
 

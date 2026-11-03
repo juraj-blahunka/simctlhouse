@@ -28,14 +28,39 @@ import Testing
         #expect(try store.snapshot().devices.count == 1)
     }
 
-    @Test func emptyStateFileIsCorrupt() throws {
+    @Test(arguments: ["", "{\"version\": 1, \"devices\": [", "not json"])
+    func corruptStateIsMovedAsideAndReset(contents: String) throws {
         try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
-        try Data().write(to: paths.stateFile)
-        let error = try #require(throws: SimctlHouseError.self) { try store.snapshot() }
-        guard case .corruptState = error else {
-            Issue.record("expected corruptState, got \(error)")
-            return
+        try Data(contents.utf8).write(to: paths.stateFile)
+        let logged = Messages()
+        let store = StateStore(paths: paths) { logged.append($0) }
+        #expect(try store.snapshot() == PoolState())
+        let backups = try FileManager.default.contentsOfDirectory(atPath: paths.root.path).filter { $0.hasPrefix("state.json.corrupt-") }
+        #expect(backups.count == 1)
+        #expect(try String(contentsOf: paths.root.appending(path: backups[0]), encoding: .utf8) == contents)
+        #expect(logged.all.count == 1)
+        #expect(logged.all.first?.contains(backups[0]) == true)
+        // Reset once: later reads find no state file, so an empty pool without another warning.
+        #expect(try store.snapshot() == PoolState())
+        #expect(logged.all.count == 1)
+    }
+
+    @Test func resetsNeverOverwriteAnEarlierBackup() throws {
+        try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
+        for contents in ["first", "second"] {
+            try Data(contents.utf8).write(to: paths.stateFile)
+            #expect(try store.snapshot() == PoolState())
         }
+        let backups = try FileManager.default.contentsOfDirectory(atPath: paths.root.path).filter { $0.hasPrefix("state.json.corrupt-") }
+        #expect(Set(try backups.map { try String(contentsOf: paths.root.appending(path: $0), encoding: .utf8) }) == ["first", "second"])
+    }
+
+    @Test func stateOfAnotherVersionIsNeverReset() throws {
+        try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
+        try Data(#"{"version": 2, "devices": [], "somethingNew": true}"#.utf8).write(to: paths.stateFile)
+        let error = try #require(throws: SimctlHouseError.self) { try store.snapshot() }
+        #expect(error == .corruptState("unsupported version 2 in \(paths.stateFile.path)"))
+        #expect(FileManager.default.fileExists(atPath: paths.stateFile.path))
     }
 
     private func addDevice() throws {
@@ -46,4 +71,12 @@ import Testing
                     now: Date()))
         }
     }
+}
+
+final class Messages: @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String] = []
+
+    var all: [String] { lock.withLock { messages } }
+    func append(_ message: String) { lock.withLock { messages.append(message) } }
 }

@@ -113,7 +113,7 @@ public struct Pool: Sendable {
         now: @escaping @Sendable () -> Date = { Date() },
         log: @escaping @Sendable (String) -> Void = { _ in }
     ) {
-        self.store = StateStore(paths: paths)
+        self.store = StateStore(paths: paths, log: log)
         self.backend = backend
         self.scanner = scanner
         self.config = config
