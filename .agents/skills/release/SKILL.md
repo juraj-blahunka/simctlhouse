@@ -143,26 +143,40 @@ git -C ../homebrew-tap push
 
 ## 9. Verify through Homebrew
 
-These read only; they do not install anything:
+The push starts the tap's `tests` workflow, which audits the formula, installs it on clean macOS 15 and 26 machines, and runs its `test` block.
+That is the only real install of the published formula before users get it, so wait for it to pass:
+
+```sh
+commit="$(git -C ../homebrew-tap rev-parse HEAD)"
+gh run list --repo juraj-blahunka/homebrew-tap --commit "$commit" --json databaseId,url   # empty for a few seconds after the push
+gh run watch <databaseId> --repo juraj-blahunka/homebrew-tap --exit-status
+```
+
+Then check the formula from this machine.
+Homebrew refuses to load formulae from a tap nobody trusted, even for `brew info`, so trust this one formula first; that changes the user's Homebrew configuration, as `brew install juraj-blahunka/tap/simctlhouse` would.
+The rest only reads and downloads; it installs nothing:
 
 ```sh
 brew tap juraj-blahunka/tap 2>/dev/null; brew update
-brew info juraj-blahunka/tap/simctlhouse         # shows X.Y.Z
-brew fetch --force juraj-blahunka/tap/simctlhouse  # downloads and checks the sha256
-brew audit --strict juraj-blahunka/tap/simctlhouse
+brew trust --formula juraj-blahunka/tap/simctlhouse
+brew info juraj-blahunka/tap/simctlhouse            # shows X.Y.Z
+brew fetch --force juraj-blahunka/tap/simctlhouse   # downloads and checks the sha256
+brew audit --strict --online juraj-blahunka/tap/simctlhouse
 ```
 
 If the user already has simctlhouse installed from the tap, offer `brew upgrade simctlhouse` and then `simctlhouse --version` and `simctlhouse skill status`.
 
 ## 10. Report
 
-Give the user the release URL (`gh release view vX.Y.Z --repo juraj-blahunka/simctlhouse --json url -q .url`), the tap commit, and the install command `brew install juraj-blahunka/tap/simctlhouse`.
+Give the user the release URL (`gh release view vX.Y.Z --repo juraj-blahunka/simctlhouse --json url -q .url`), the tap commit, the URL of its passing `tests` run, and the install command `brew install juraj-blahunka/tap/simctlhouse`.
 
 ## Recovering from a failed release
 
 - Failure before step 8: nothing is public. Fix the cause and start again; re-running `scripts/release.sh` is fine.
 - Tag pushed, release missing: run the `gh release create` step again.
 - Release created, tap not updated: run the tap steps again.
+- The tap's `tests` run fails: show the user the failing step's log (`gh run view <databaseId> --repo juraj-blahunka/homebrew-tap --log-failed`), because users installing now hit the same failure.
+  Fix forward with a new tap commit; never force-push the tap, since users' `brew update` pulls it.
 - Notes need fixing after publishing: edit `dist/release-notes-X.Y.Z.md` with the user, then `gh release edit vX.Y.Z --repo juraj-blahunka/simctlhouse --notes-file dist/release-notes-X.Y.Z.md`.
 - Never re-run `scripts/release.sh` for a version whose tarball is uploaded, because every build has a new sha256.
   To replace a broken upload, ask the user first, then `gh release upload vX.Y.Z <tarball> --clobber` with a fresh build and publish the matching formula.

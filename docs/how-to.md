@@ -239,6 +239,7 @@ By hand:
 3. Run `scripts/smoke-test.sh dist/simctlhouse-1.4.0-macos.tar.gz`: in a throwaway home, the shipped binary acquires a real simulator, starts, stops and restarts the daemon, releases the device, waits for the daemon to shut it down and exit on its own, and deletes it; the script checks that no other simulator was touched.
 4. Tag the commit `v1.4.0`, push it, and attach the tarball to a GitHub release of that tag.
 5. Copy `dist/simctlhouse.rb` to `Formula/simctlhouse.rb` in the tap and push.
+   The tap's `tests` workflow then audits the formula, installs it on macOS 15 and 26 and runs its `test` block; wait for it to pass.
 
 `--skip-notarize` and `--allow-dirty` let you try the script without credentials or a commit; never publish such a build.
 The tarball is laid out like an install prefix (`bin/`, `share/simctlhouse/skills/simctlhouse`, `LICENSE`), so it also works unpacked into any prefix by hand.
