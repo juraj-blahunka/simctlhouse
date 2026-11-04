@@ -2,18 +2,34 @@
 
 **Device Hub for Agents.**
 
-When several AI agents build and test iOS apps on one Mac, they tend to grab the same simulator.
-The runs then fight over it and fail at random.
-simctlhouse gives every agent its own simulator from a shared pool, with an exclusive lease, and cleans up after agents that forget.
+Give every coding agent its own iOS simulator.
+No more agents fighting over one device, no more builds that fail at random.
+simctlhouse runs a shared pool: agents lease a simulator, keep it to themselves, and hand it back warm for the next one.
+Forget to release? It reclaims the device for you.
+
+It is a CLI built for agents to call, and it ships with an agent skill that teaches them to.
+Install both once, and Claude Code, Codex, pi or any agent that loads [Agent Skills](https://agentskills.io/specification) leases a simulator from simctlhouse whenever it is about to build, test or run an app, instead of picking one from `xcrun simctl list` or using `booted`.
+You do not change your prompts or your projects.
 
 ```sh
-UDID=$(simctlhouse acquire)                       # lease + boot a free iPhone, print its UDID
-xcodebuild test -scheme App -destination "id=$UDID"
-simctlhouse release "$UDID"                       # back to the pool, still booted for the next agent
+brew install juraj-blahunka/tap/simctlhouse
+simctlhouse skill install   # links the skill into every coding agent it finds
 ```
+
+With the skill loaded, an agent's test run looks like this:
+
+```sh
+UDID=$(simctlhouse acquire --holder "fix login test")   # lease + boot a free iPhone, print its UDID
+xcodebuild test -scheme App -destination "id=$UDID"
+simctlhouse release "$UDID"                             # back to the pool, still booted for the next agent
+```
+
+Every command takes a device name or UDID, prints machine-readable output on stdout (`--json` for structured data), sends everything human to stderr, and reports failures as stable [exit codes](docs/how-to.md#exit-codes), so agents and scripts can act on them.
 
 ## What it does
 
+- **Agent skill included.** [`skills/simctlhouse/SKILL.md`](skills/simctlhouse/SKILL.md) tells agents when to lease, how to use the UDID, when to renew, and to release when done, also after failures.
+  `brew upgrade` updates it together with the binary.
 - **Exclusive leases.** A device is handed to one agent at a time.
 - **Pooling.** Released devices are reused, still booted, by the next agent asking for the same model and OS.
 - **Plain simulators.** Devices are ordinary simulators made with `simctl create`, visible in Xcode.
