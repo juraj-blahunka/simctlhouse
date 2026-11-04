@@ -46,8 +46,8 @@ Running the binary from inside `Cellar/` links a versioned path that the next up
 simctlhouse itself is a plain CLI; any agent that can run shell commands can use it.
 The skill only teaches agents the workflow, and it comes in the [Agent Skills](https://agentskills.io/specification) (SKILL.md) format that Claude Code, Codex, pi and several other agents load.
 
-- Claude Code, Codex and pi: `scripts/install.sh` links the skill automatically.
-- Another agent that loads SKILL.md skills: `scripts/install.sh --skills-dir <that agent's skills directory>`.
+- Claude Code, Codex and pi: `simctlhouse skill install` (Homebrew) or `scripts/install.sh` (source) links the skill into each one it finds.
+- Another agent that loads SKILL.md skills: pass `--skills-dir <that agent's skills directory>` to either.
 - An agent without skills: add this to the project's `AGENTS.md` (or the agent's own instructions file):
 
   ```markdown

@@ -73,17 +73,32 @@ Set them where your agents run, for example in your shell profile, so every simc
 
 ## Install
 
+Requires macOS 14 or later on Apple silicon, with Xcode and at least one iOS runtime installed.
+
+### Homebrew
+
+```sh
+brew install juraj-blahunka/tap/simctlhouse
+simctlhouse skill install   # once, to link the agent skill into your coding agents
+```
+
+This installs the signed and notarized release binary, and the agent skill next to it in `<prefix>/share/simctlhouse/skills`.
+`simctlhouse skill install` links the skill into every coding agent it finds (Claude Code, Codex and pi); `brew upgrade simctlhouse` then updates the skill too.
+Run `simctlhouse skill uninstall` before `brew uninstall simctlhouse`.
+
+### From source
+
 ```sh
 scripts/install.sh
 ```
 
-This builds the binary exactly as a release does (Apple silicon only) and installs it to `/usr/local/bin` (or `~/.local/bin` if that is not writable).
-It also links the agent skill (`skills/simctlhouse/SKILL.md`) into every coding agent it finds (Claude Code, Codex and pi), so it updates whenever you pull.
-Other agents work too: pass `--skills-dir` for any agent that loads SKILL.md skills, or add a few lines to your project's `AGENTS.md` (see the [how-to](docs/how-to.md#use-it-from-any-agent)).
+This builds the binary exactly as a release does and installs it to `/usr/local/bin` (or `~/.local/bin` if that is not writable).
+It also links the agent skill (`skills/simctlhouse/SKILL.md`) into every coding agent it finds, so it updates whenever you pull.
 Run `scripts/install.sh --help` for options, including `--uninstall`.
 
-A release installs the skill next to the binary instead, in `<prefix>/share/simctlhouse/skills`.
-Run `simctlhouse skill install` once to link it into your agents; upgrades of the package then update the skill too.
+### Other agents
+
+Pass `--skills-dir` (to `simctlhouse skill install` or `scripts/install.sh`) for any agent that loads SKILL.md skills, or add a few lines to your project's `AGENTS.md` (see the [how-to](docs/how-to.md#use-it-from-any-agent)).
 
 ## Docs
 
