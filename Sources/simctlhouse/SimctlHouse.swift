@@ -383,11 +383,18 @@ struct DaemonCommand: ParsableCommand {
     struct Start: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Start the daemon in the background unless it runs, and wait until it does.",
-            discussion: "It takes its timeouts from this command's environment, e.g. SIMCTLHOUSE_IDLE_SECONDS=1 simctlhouse daemon start."
+            discussion: """
+                It takes its timeouts from this command's environment, e.g. SIMCTLHOUSE_IDLE_SECONDS=1 simctlhouse daemon start.
+                When nothing is leased, booted or in progress, it starts nothing: the daemon would exit right away.
+                """
         )
 
         func run() throws {
-            try Runtime.run {
+            try Runtime.run { pool in
+                guard try pool.hasWorkForDaemon() else {
+                    Runtime.note("Not started: nothing is leased, booted or in progress. The next acquire, release or renew starts it.")
+                    return
+                }
                 let (outcome, state) = try DaemonLauncher(paths: HousePaths.fromEnvironment()).start()
                 switch (outcome, state) {
                 case (.running, _): Runtime.note("Already running.")

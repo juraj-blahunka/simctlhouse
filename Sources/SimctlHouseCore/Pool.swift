@@ -586,6 +586,14 @@ public struct Pool: Sendable {
         return (report, jobs.isEmpty ? live : nil)
     }
 
+    /// Whether a daemon would have anything to watch, decided as the daemon does on its first wake:
+    /// collect garbage, then look for a deadline. `daemon start` asks first, so it never starts a daemon that would exit at once.
+    public func hasWorkForDaemon() throws -> Bool {
+        let started = now()
+        try collectGarbage()
+        return nextWake(in: try store.snapshot(), collectedAt: started) != nil
+    }
+
     /// When GC next has something to do on its own, or nil if nothing can come due until another command adds work.
     /// Reads only `state`, so the daemon can decide to exit under the same lock that a command adding work takes.
     /// A free device may be booted, so it counts until a collection that started at `collectedAt` or later

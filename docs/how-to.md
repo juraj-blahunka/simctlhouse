@@ -125,7 +125,7 @@ To look at it or control it:
 ```sh
 simctlhouse daemon status     # running or not, since when, pid, version, binary
 simctlhouse daemon stop       # stops it until the next acquire, release or renew
-simctlhouse daemon start      # starts it now; it takes the timeouts from this command's environment
+simctlhouse daemon start      # starts it now, if anything is leased, booted or in progress; with this command's timeouts
 tail ~/.simctlhouse/daemon.log
 ```
 

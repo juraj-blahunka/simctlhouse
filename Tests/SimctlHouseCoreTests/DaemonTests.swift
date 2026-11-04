@@ -15,6 +15,19 @@ import Testing
         #expect(h.pool.nextWake(in: try h.state(), collectedAt: h.clock.now) == nil)
     }
 
+    @Test func onlyAPoolWithSomethingToWatchNeedsADaemon() throws {
+        #expect(try !h.pool.hasWorkForDaemon())
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        #expect(try h.pool.hasWorkForDaemon())
+        try h.pool.release(device.name)
+        // Released and still booted: the daemon has its idle shutdown to do.
+        #expect(try h.pool.hasWorkForDaemon())
+        h.clock.advance(minutes: 16)
+        // Asking collects first, which shuts the idle device down, so nothing is left.
+        #expect(try !h.pool.hasWorkForDaemon())
+        #expect(h.backend.device(try #require(device.udid))?.state == "Shutdown")
+    }
+
     @Test func wakesForTheEarliestLeaseExpiryOrIdleShutdown() throws {
         let leased = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         #expect(h.pool.nextWake(in: try h.state(), collectedAt: h.clock.now) == leased.expiresAt)

@@ -175,7 +175,8 @@ Whether a daemon runs is whether that lock is held; the kernel drops it when the
    The old daemon is signalled only while its pid still has the recorded start time.
    Until it has exited, the state's `version` keeps it from damaging what the new build wrote (D31).
 
-`daemon start` does the same, and then waits until the daemon it started has taken the lock.
+`daemon start` first collects garbage and asks `Pool.hasWorkForDaemon` whether anything is left to watch, as the daemon would on its first wake; if nothing is, it starts none, since that daemon would exit at once.
+Otherwise it does the same, and then waits until the daemon it started has taken the lock.
 The daemon takes its timeouts from the environment of the command that started it.
 
 ### Stopping
