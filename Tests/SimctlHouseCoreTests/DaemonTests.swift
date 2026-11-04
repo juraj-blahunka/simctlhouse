@@ -143,6 +143,49 @@ import Testing
         #expect(spawned.value == 1)
     }
 
+    @Test func aCommandStartsTheDaemonOnlyOnceItSucceeded() throws {
+        let spawned = Counter()
+        let launcher = launcher(spawned)
+        let result = try launcher.ensureRunning(
+            after: { () -> Int in
+                #expect(spawned.value == 0)
+                return 7
+            }, environment: [:], warn: { Issue.record("unexpected warning: \($0)") })
+        #expect(result == 7)
+        #expect(spawned.value == 1)
+
+        #expect(throws: SimctlHouseError.deviceNotFound("amber-falcon")) {
+            try launcher.ensureRunning(after: { throw SimctlHouseError.deviceNotFound("amber-falcon") }, environment: [:], warn: { _ in })
+        }
+        #expect(spawned.value == 1)
+    }
+
+    @Test func aCommandLeavesTheDaemonAloneWhenItIsTurnedOff() throws {
+        let spawned = Counter()
+        let ran = Counter()
+        try launcher(spawned).ensureRunning(after: { ran.increment() }, environment: ["SIMCTLHOUSE_DAEMON": "0"], warn: { _ in })
+        #expect(ran.value == 1)
+        #expect(spawned.value == 0)
+    }
+
+    @Test func anInvalidDaemonSettingFailsTheCommandBeforeItRuns() {
+        let ran = Counter()
+        #expect(throws: SimctlHouseError.invalidEnvironment(variable: "SIMCTLHOUSE_DAEMON", value: "yes", expected: "0 or 1")) {
+            try launcher(Counter()).ensureRunning(after: { ran.increment() }, environment: ["SIMCTLHOUSE_DAEMON": "yes"], warn: { _ in })
+        }
+        #expect(ran.value == 0)
+    }
+
+    @Test func aDaemonThatCannotStartOnlyWarns() throws {
+        let launcher = DaemonLauncher(
+            paths: HousePaths(root: h.root), build: build, scanner: h.scanner,
+            spawn: { _ in throw SimctlHouseError.io("Cannot start the daemon") }, signal: { _ in })
+        let warnings = Messages()
+        let result = try launcher.ensureRunning(after: { "done" }, environment: [:], warn: warnings.append)
+        #expect(result == "done")
+        #expect(warnings.all == ["warning: could not start the simctlhouse daemon: Cannot start the daemon"])
+    }
+
     @Test func startWaitsForTheDaemonItStarted() throws {
         let lockPath = h.root.appending(path: "daemon.lock")
         let record = DaemonRecord(pid: 4343, processStartedAt: nil, startedAt: h.clock.now, version: "test", build: build)

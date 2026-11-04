@@ -20,6 +20,6 @@ let package = Package(
         ),
         .target(name: "SimctlHouseCore"),
         .testTarget(name: "SimctlHouseCoreTests", dependencies: ["SimctlHouseCore"]),
-        .testTarget(name: "SimctlHouseTests", dependencies: ["simctlhouse"]),
+        .testTarget(name: "SimctlHouseTests", dependencies: ["simctlhouse", "SimctlHouseCore"]),
     ]
 )

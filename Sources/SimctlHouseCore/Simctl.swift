@@ -69,7 +69,16 @@ public protocol SimulatorBackend: Sendable {
 }
 
 public struct Simctl: SimulatorBackend {
-    public init() {}
+    /// Runs `xcrun simctl` with the given arguments. Tests pass recorded output instead.
+    let execute: @Sendable ([String]) throws -> Subprocess.Result
+
+    public init() {
+        self.init(execute: { arguments in try Subprocess.run("/usr/bin/xcrun", ["simctl"] + arguments) })
+    }
+
+    init(execute: @escaping @Sendable ([String]) throws -> Subprocess.Result) {
+        self.execute = execute
+    }
 
     public func devices() throws -> [SimDevice] {
         struct Listing: Decodable { var devices: [String: [SimDevice]] }
@@ -119,10 +128,9 @@ public struct Simctl: SimulatorBackend {
     }
 
     private func run(_ arguments: [String]) throws -> Data {
-        let full = ["simctl"] + arguments
-        let result = try Subprocess.run("/usr/bin/xcrun", full)
+        let result = try execute(arguments)
         guard result.status == 0 else {
-            throw SimctlHouseError.simctlFailed(command: full.joined(separator: " "), status: result.status, stderr: result.stderr)
+            throw SimctlHouseError.simctlFailed(command: (["simctl"] + arguments).joined(separator: " "), status: result.status, stderr: result.stderr)
         }
         return result.stdout
     }

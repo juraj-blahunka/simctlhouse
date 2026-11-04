@@ -326,6 +326,24 @@ public struct DaemonLauncher: Sendable {
         try ensure().outcome
     }
 
+    /// Runs a command that leaves something for the daemon to watch, then makes sure a daemon runs, unless
+    /// `SIMCTLHOUSE_DAEMON=0`. Only once the command has returned, so after its change has committed (see `ensureRunning`).
+    /// Failing to start the daemon only warns: the command succeeded, and the next command still enforces the timeouts.
+    public func ensureRunning<T>(
+        after command: () throws -> T, environment: [String: String] = ProcessInfo.processInfo.environment, warn: (String) -> Void
+    ) throws -> T {
+        // Checked first, so an invalid value fails the command before it changes anything.
+        let enabled = try Self.isEnabled(environment)
+        let result = try command()
+        guard enabled else { return result }
+        do {
+            try ensureRunning()
+        } catch {
+            warn("warning: could not start the simctlhouse daemon: \(error)")
+        }
+        return result
+    }
+
     /// `spawned` is the pid of the daemon this call started, if it started one.
     private func ensure() throws -> (outcome: Outcome, spawned: Int32?) {
         guard try DaemonLock.isHeld(at: paths.daemonLock) else { return (.started, try spawn(false)) }

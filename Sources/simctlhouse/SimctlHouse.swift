@@ -74,18 +74,9 @@ enum Runtime {
     }
 
     /// Runs a command that leaves something for the daemon to watch, then makes sure a daemon runs.
-    /// The daemon is started only after the command's change has committed (see `DaemonLauncher.ensureRunning`).
     static func runStartingDaemon(_ body: (Pool) throws -> Void) throws {
         try run {
-            let startsDaemon = try DaemonLauncher.isEnabled()
-            try body(pool())
-            guard startsDaemon else { return }
-            // The command itself succeeded; without a daemon the next command still enforces the timeouts.
-            do {
-                try DaemonLauncher(paths: HousePaths.fromEnvironment()).ensureRunning()
-            } catch {
-                note("warning: could not start the simctlhouse daemon: \(error)")
-            }
+            try DaemonLauncher(paths: HousePaths.fromEnvironment()).ensureRunning(after: { try body(pool()) }, warn: note)
         }
     }
 
@@ -99,10 +90,15 @@ enum Runtime {
     }
 
     static func printJSON<T: Encodable>(_ value: T) throws {
+        print(try json(value))
+    }
+
+    /// What `--json` prints. Scripts read it, so its keys and formats are API like the exit codes.
+    static func json<T: Encodable>(_ value: T) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601
-        print(String(decoding: try encoder.encode(value), as: UTF8.self))
+        return String(decoding: try encoder.encode(value), as: UTF8.self)
     }
 
     static func note(_ message: String) {
