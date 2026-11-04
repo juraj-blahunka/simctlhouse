@@ -67,7 +67,7 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
 | 3 | Device not found | Your lease expired and the device was reclaimed. Acquire a new one; on `release` this is harmless |
 | 4 | Lease ID mismatch / not leased | The device is no longer yours. Acquire a new one |
 | 5 | Device leased, busy, or used by another process | Pick another device, or use `--force` only on a device you own |
-| 1 | simctl failure | Read stderr; retry once, then report |
+| 1 | simctl failure, or no Xcode selected | Read stderr. If it says Xcode is needed, stop and tell the user; do not run `sudo xcode-select` yourself. Otherwise retry once, then report |
 | 64 | Invalid usage or `SIMCTLHOUSE_*` value | Fix the command or the environment variable named in stderr |
 
 ## Other commands

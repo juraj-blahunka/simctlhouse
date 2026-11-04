@@ -2,6 +2,8 @@ import Foundation
 
 public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
     case simctlFailed(command: String, status: Int32, stderr: String)
+    /// `xcrun` itself failed before simctl ran: no Xcode selected, typically Command Line Tools only.
+    case xcodeRequired(stderr: String)
     case unknownModel(String)
     case unsupportedModel(String)
     case noRuntime(model: String, os: String?)
@@ -22,7 +24,7 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
     /// Distinct exit codes so agents can branch without parsing messages.
     public var exitCode: Int32 {
         switch self {
-        case .simctlFailed: 1
+        case .simctlFailed, .xcodeRequired: 1
         case .unknownModel, .unsupportedModel, .noRuntime: 2
         case .deviceNotFound: 3
         case .leaseMismatch, .notLeased: 4
@@ -37,6 +39,10 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
         switch self {
         case .simctlFailed(let command, let status, let stderr):
             "`xcrun \(command)` failed with status \(status): \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))"
+        case .xcodeRequired(let stderr):
+            "simctlhouse needs Xcode's simctl, but xcrun could not run it: \(stderr.trimmingCharacters(in: .whitespacesAndNewlines)). "
+                + "Install Xcode (Command Line Tools alone have no simulators), then select it with "
+                + "`sudo xcode-select -s /Applications/Xcode.app` or point DEVELOPER_DIR at it."
         case .unknownModel(let model):
             "Unknown device model '\(model)'. Run `xcrun simctl list devicetypes` to see available models."
         case .unsupportedModel(let model):

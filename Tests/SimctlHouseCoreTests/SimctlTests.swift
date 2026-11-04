@@ -83,6 +83,14 @@ import Testing
         }
     }
 
+    @Test func withoutXcodeTheErrorSaysToInstallIt() {
+        // Recorded with DEVELOPER_DIR=/Library/Developer/CommandLineTools.
+        let stderr = "xcrun: error: unable to find utility \"simctl\", not a developer tool or in PATH\n"
+        let (simctl, _) = Simctl.replying(status: 72, stderr: stderr)
+        #expect(throws: SimctlHouseError.xcodeRequired(stderr: stderr)) { try simctl.devices() }
+        #expect(SimctlHouseError.xcodeRequired(stderr: stderr).description.contains("xcode-select -s /Applications/Xcode.app"))
+    }
+
     // MARK: - recorded output
 
     static let alreadyShutDown = """

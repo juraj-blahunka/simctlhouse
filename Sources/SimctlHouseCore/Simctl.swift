@@ -130,6 +130,8 @@ public struct Simctl: SimulatorBackend {
     private func run(_ arguments: [String]) throws -> Data {
         let result = try execute(arguments)
         guard result.status == 0 else {
+            // simctl's own errors come from CoreSimulator; an `xcrun: error:` means simctl never ran.
+            if result.stderr.hasPrefix("xcrun: error:") { throw SimctlHouseError.xcodeRequired(stderr: result.stderr) }
             throw SimctlHouseError.simctlFailed(command: (["simctl"] + arguments).joined(separator: " "), status: result.status, stderr: result.stderr)
         }
         return result.stdout
