@@ -1,6 +1,10 @@
-# simctlhouse
+<p align="center">
+  <img src="docs/assets/icon.png" width="160" height="160" alt="simctlhouse icon">
+</p>
 
-**Device Hub for Agents.**
+<h1 align="center">simctlhouse</h1>
+
+<p align="center"><strong>Device Hub for Agents.</strong></p>
 
 Give every coding agent its own iOS simulator.
 No more agents fighting over one device, no more builds that fail at random.

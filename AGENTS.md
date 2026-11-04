@@ -28,6 +28,7 @@ scripts/smoke-test.sh TARBALL       # run a release tarball against real simulat
   Update it whenever CLI behaviour or flags change, and keep it free of agent-specific instructions.
 - `.agents/skills/release/SKILL.md`: the maintainer skill that publishes a release (tag, GitHub release, Homebrew tap).
 - `docs/`: decisions, architecture, how-tos.
+  `docs/assets/icon-source.png` is the full-bleed 1024px icon artwork; `docs/assets/icon.png` is the rounded README icon made from it.
 
 ## Invariants
 
