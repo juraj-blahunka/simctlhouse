@@ -89,7 +89,7 @@ fi
 
 step "Running tests and lint"
 swift test --package-path "$repo_dir"
-swift format lint --strict -r Sources Tests
+"$repo_dir/scripts/lint.sh"
 
 name="simctlhouse-$version"
 stage="$dist/$name"

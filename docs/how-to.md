@@ -188,7 +188,7 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 
 ```sh
 swift test                          # unit tests, no simulators needed
-swift format lint -r Sources Tests  # lint
+scripts/lint.sh                     # lint; --fix reformats first
 ```
 
 End-to-end, against real simulators but in an isolated home and with short timeouts.

@@ -9,7 +9,7 @@ Read `docs/architecture.md` before changing `Pool.swift`, and `docs/decisions.md
 swift build                         # debug build
 swift build -c release              # .build/release/simctlhouse
 swift test                          # unit tests (FakeBackend, no simulators)
-swift format lint -r Sources Tests  # must be clean; `swift format format -i -r Sources Tests` fixes most
+scripts/lint.sh                     # swift format lint --strict; must be clean, `scripts/lint.sh --fix` fixes most
 scripts/install.sh                  # build release + install binary + link skill into detected agents (see --help)
 scripts/build.sh OUTPUT             # the release binary: arm64, stripped, signed (install.sh and release.sh use it)
 scripts/release.sh <version>        # signed, notarized release tarball + Homebrew formula in dist/ (see --help)
