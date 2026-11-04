@@ -25,7 +25,8 @@ import Testing
         h.clock.advance(minutes: 16)
         // Asking collects first, which shuts the idle device down, so nothing is left.
         #expect(try !h.pool.hasWorkForDaemon())
-        #expect(h.backend.device(try #require(device.udid))?.state == "Shutdown")
+        let udid = try #require(device.udid)
+        #expect(h.backend.device(udid)?.state == "Shutdown")
     }
 
     @Test func wakesForTheEarliestLeaseExpiryOrIdleShutdown() throws {
@@ -127,7 +128,7 @@ import Testing
         let pool = Pool(paths: HousePaths(root: h.root), backend: h.backend, scanner: h.scanner, config: config)
         let device = try pool.acquire(AcquireRequest(spec: DeviceSpec()))
         let daemon = Daemon(pool: pool, version: "test", build: build)
-        let served = Task.detached { try daemon.serve() }
+        let served = Background { try daemon.serve() }
         try await Task.sleep(for: .milliseconds(300))
         try pool.release(device.name)
         let started = Date()
@@ -138,14 +139,14 @@ import Testing
 
     @Test func aStateChangeEndsTheSleep() async throws {
         let signals = DaemonSignals()
-        let slept = Task.detached {
+        let slept = Background {
             let started = Date()
             signals.sleep(30)
             return Date().timeIntervalSince(started)
         }
         try await Task.sleep(for: .milliseconds(100))
         signals.stateChanged()
-        #expect(await slept.value < 10)
+        #expect(try await slept.value < 10)
     }
 
     // MARK: - launcher
@@ -267,10 +268,9 @@ import Testing
         _ = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         let signals = DaemonSignals()
         let daemon = Daemon(pool: h.pool, version: "test", build: build, signals: signals, sleep: { _ in signals.stop() })
-        let served = Task.detached { try daemon.serve(takeOver: true) }
-        try await Task.sleep(for: .milliseconds(300))
+        let served = Background { try daemon.serve(takeOver: true) }
         // Waiting: it holds the next lock, not the daemon lock.
-        #expect(try DaemonLock.isHeld(at: h.root.appending(path: "daemon.next.lock")))
+        #expect(try await eventually { try DaemonLock.isHeld(at: h.root.appending(path: "daemon.next.lock")) })
         held.release()
         #expect(try await served.value == .stopped)
         #expect(DaemonLock.record(at: h.root.appending(path: "daemon.lock"))?.build == build)
@@ -341,6 +341,52 @@ final class Counter: @unchecked Sendable {
 
     var value: Int { lock.withLock { count } }
     func increment() { lock.withLock { count += 1 } }
+}
+
+/// Whether `condition` becomes true within `timeout`, checked every 20ms.
+/// Waits on a state instead of a fixed time, because background work starts late on a loaded machine.
+func eventually(timeout: Duration = .seconds(10), _ condition: () throws -> Bool) async throws -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if try condition() { return true }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    return try condition()
+}
+
+/// Runs blocking work, such as `Daemon.serve`, on a GCD thread while the test goes on and later awaits its result.
+///
+/// `Task.detached` would run it on Swift's cooperative pool, which has one thread per core (3 on a CI runner).
+/// The blocked work would then hold a thread that the test needs to resume and unblock it, and the run hangs.
+final class Background<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<T, Error>?
+    private var waiter: CheckedContinuation<T, Error>?
+
+    init(_ work: @escaping @Sendable () throws -> T) {
+        DispatchQueue.global().async { self.finish(Result { try work() }) }
+    }
+
+    var value: T {
+        get async throws {
+            try await withCheckedThrowingContinuation { continuation in
+                let done = lock.withLock {
+                    if result == nil { waiter = continuation }
+                    return result
+                }
+                if let done { continuation.resume(with: done) }
+            }
+        }
+    }
+
+    private func finish(_ done: Result<T, Error>) {
+        let waiting = lock.withLock {
+            result = done
+            defer { waiter = nil }
+            return waiter
+        }
+        waiting?.resume(with: done)
+    }
 }
 
 final class Held: @unchecked Sendable {
