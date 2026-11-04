@@ -35,7 +35,6 @@ Check all of these before changing anything, and report every failure at once:
 ```sh
 git rev-parse --abbrev-ref HEAD                  # main
 git status --porcelain --untracked-files=no      # empty
-git remote get-url origin                        # github.com/juraj-blahunka/simctlhouse
 git fetch origin && git status -sb | head -1     # not behind origin/main
 git ls-remote --tags origin "refs/tags/vX.Y.Z"   # empty: the version is unreleased
 gh auth status                                   # logged in
