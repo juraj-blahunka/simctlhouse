@@ -77,6 +77,7 @@ The clock restarts once the boot completes, so a slow create or boot on a loaded
 A boot that outlasts the whole lease finds the device reclaimed, and `acquire` fails with exit code 3.
 There is no automatic extension based on detected activity, and no per-acquire TTL.
 Trade-off: an agent running a long suite must call `renew`, or its device is reclaimed mid-run.
+`simctlhouse run` leases are the exception: they last as long as the `run` process (D33).
 
 ## D10. Reclaimed devices get a new name
 
@@ -252,7 +253,7 @@ Trade-off: a device whose simctlhouse process hangs stays unusable for up to an 
 ## D29. An on-demand daemon enforces timeouts on time
 
 Without one, an expired lease kept its device booted, and a released device stayed booted past its idle time, until some command happened to run (D12).
-`acquire`, `release` and `renew` now start `simctlhouse daemon serve` when none runs; it collects garbage as deadlines come due and exits once nothing is leased, booted or in progress.
+`acquire`, `release` and `renew` (and since D33 `run`) now start `simctlhouse daemon serve` when none runs; it collects garbage as deadlines come due and exits once nothing is leased, booted or in progress.
 A launchd agent was rejected: it runs whether or not the pool is in use, and needs installing and uninstalling.
 
 The daemon needs no port or socket, because all coordination already goes through `state.json` and its lock.
@@ -297,3 +298,51 @@ The selection happens in the transaction that claims the devices, so a device ac
 Sizes are measured only for the devices being deleted, once claimed and outside the state lock, so `list` stays fast and shows no sizes.
 The history reason is `deleted`, as for any other `delete`, so `state.json` does not change.
 Trade-off: the disk space only comes back when someone runs the command; `list` does not hint at it.
+
+## D33. `run` binds a lease to its process instead of renewing it
+
+`simctlhouse run` wraps one command in a lease, because agents forget to release and renew: `history` showed leases without a holder, and a device reclaimed mid-test after a forgotten `renew`.
+Its lease carries an `owner`, the pid and start time of the `run` process; while that process runs, GC never expires the lease, and once it is gone, GC reclaims the device.
+This narrows D9: a lease held by `run` lasts as long as its command, however long that is.
+
+A wrapper that calls `renew` on a timer was rejected.
+A renew that fails under load needs retries; after the Mac sleeps, the daemon and the wrapper's timer race, and the lease can be lost; every renew runs a full GC.
+Above all, a wrapper killed with SIGKILL, as agent harnesses do on a timeout, would leave the device leased until the lease ran out, and handling that needs the owner in the lease anyway.
+With the owner recorded, the timer adds nothing.
+
+A dead owner gets its device reclaimed (re-created under a new name, outcome `abandoned`) rather than released, since the command it started may still be running as an orphan; deleting the simulator cuts it off.
+The daemon notices within its 60-second poll; with `SIMCTLHOUSE_DAEMON=0`, the next command does.
+GC keeps the owned lease's `expiresAt` moving forward, so `nextWake`, `--json` readers and older tooling still see a live lease.
+The release at the end runs one transaction without GC or `simctl` calls, so it finishes in milliseconds, before a harness follows its SIGTERM with a SIGKILL.
+`run` watches the state while the command runs; if a device no longer carries its lease (someone released or deleted it, D20), it stops the command, which could otherwise act on a device another agent now holds.
+
+Signals: the command runs in `run`'s process group, so Ctrl-C and a harness that kills the group reach it directly.
+`run` forwards SIGTERM, and SIGINT, SIGQUIT or SIGHUP unless the terminal sent them to the whole group; macOS leaves `si_pid` and `si_code` unreliable, so a signal counts as the terminal's while `run` is the terminal's foreground process group.
+A command that has not exited 15 seconds after it was stopped, or that gets a second signal, is killed with every process it started.
+`--timeout` stops it the same way.
+
+Trade-off: a command that hangs holds its device for as long as `run` lives, where a forgotten `acquire` frees it after 30 minutes; `--timeout` and the agent's own timeouts bound that.
+A pool whose agents' harnesses routinely SIGKILL `run` re-creates devices more often, each costing a first boot.
+`state.json` went to version 2 for the owner (D31).
+
+## D34. `run` fills in the device, and keeps its own exit codes out of the command's way
+
+`run` exits with its command's code, so agents and scripts read it like the command's own.
+Its own failures cannot use the codes of D22, which commands use too (xcodebuild exits 65 and others, plenty of tools exit 1 or 2), so it uses the convention of `env`, `nice` and `timeout`: 124 timed out, 125 simctlhouse failed, 126 cannot execute, 127 not found, and 128+N or the same signal when signal N ended the command.
+125 covers every failure of simctlhouse itself, with the cause on stderr; usage errors under `run` are mapped from 64 to 125 as well.
+Re-raising the signal tells a calling shell that the command was interrupted, so a script stops on Ctrl-C; crash signals are reported as 128+N instead, since raising them again would file a crash report against simctlhouse.
+
+A direct `xcodebuild` (or `xcrun xcodebuild`) gets `-destination id=<UDID>` added, one per device with `--count`, unless it lists or archives.
+Agents then cannot get the destination wrong, which `-destination 'name=iPhone ...'` and `booted` do all the time, and which is the collision simctlhouse exists to prevent.
+A `-destination` that is not generic and does not name the leased UDID is refused with 125 rather than warned about: an agent ignores a warning, and the fix is to delete the option.
+It is refused before leasing when no lease could make it valid, so no boot is wasted.
+Other tools take the device in arguments whose place depends on the subcommand, so they get `{udid}` and `{name}` placeholders and `SIMCTLHOUSE_UDID`, `SIMCTLHOUSE_DEVICE` and `SIMCTLHOUSE_LEASE_ID` instead of guessing.
+With `--count`, only the lists `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICES` are set and the placeholders are refused, so a script written for one device fails loudly instead of using the first.
+
+`run` is for one self-contained command, typically an end-to-end test run, and the docs and skill present it only that way.
+Steps that must share a device, such as build, install, launch and screenshot, hold it across commands with `acquire` and `release`, like a lock: two `run`s may get two devices, and chaining the steps into one `run` with `sh -c` hides that they depend on one device.
+
+Without `--holder` or `SIMCTLHOUSE_HOLDER`, `acquire` and `run` label the lease with the agent and directory, such as `claude in app`, and `run` adds the command.
+The agent is the first process above the shells and wrappers in between, named by its `argv[0]`, since the kernel's process name of a binary installed under a version number (`~/.local/share/claude/versions/2.1.3`) is that number.
+The directory is the last component of `$PWD` (when it names the working directory) or of the working directory; `history` keeps the full path.
+Trade-off: the default says who and where, not what; the skill still asks for a `--holder`.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs a release tarball end to end against real simulators, the way a user would after `brew install`:
-# link the skill, acquire a device, check the daemon, release it, delete the pool, and check that no other simulator was touched.
+# link the skill, acquire a device, check the daemon, release it, delete the pool, wrap a command in `run`,
+# and check that no other simulator was touched.
 # Everything runs in throwaway directories (SIMCTLHOUSE_HOME and the skills directory), never in your own setup.
 set -euo pipefail
 
@@ -94,6 +95,20 @@ xcrun simctl list devices | /usr/bin/grep -F "$udid" | /usr/bin/grep -qF "(Shutd
 step "Deleting it"
 "$bin" delete --all --force
 ! udids | /usr/bin/grep -qxF "$udid" || fail "deleted device $udid still exists."
+
+step "Running a command on a leased device with run (creates and boots one; about 30 seconds)"
+status=0
+out="$("$bin" run --holder smoke-run -- sh -c 'echo "$SIMCTLHOUSE_UDID {udid}"; exit 7')" || status=$?
+[[ $status -eq 7 ]] || fail "run did not pass the command's exit code 7 through (got $status)."
+read -r run_udid run_arg <<<"$out"
+[[ -n "$run_udid" && "$run_udid" == "$run_arg" ]] || fail "run gave the command '$out' instead of its UDID twice."
+[[ -z "$("$bin" list leased 2>/dev/null)" ]] || fail "run left a device leased."
+"$bin" history "$run_udid" | /usr/bin/grep -q "released *smoke-run" || fail "history does not show the run's lease as released."
+status=0
+"$bin" run -- simctlhouse-smoke-no-such-command 2>/dev/null || status=$?
+[[ $status -eq 127 ]] || fail "run of a missing command exited with $status instead of 127."
+"$bin" delete --all --force
+wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of deleting the pool."
 
 step "Keeping a daemon alive with nothing to watch"
 "$bin" daemon start --keep-alive 0 2>/dev/null

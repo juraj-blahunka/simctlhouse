@@ -87,6 +87,23 @@ import Testing
         #expect(try !DaemonLock.isHeld(at: h.root.appending(path: "daemon.lock")))
     }
 
+    @Test func keepsWatchingALeaseBoundToAProcessAndReclaimsItOnceTheProcessExits() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec(), owner: 4242))
+        let exitAt = h.clock.now.addingTimeInterval(3 * 60 * 60)
+        let daemon = Daemon(
+            pool: h.pool, version: "test", build: build, signals: DaemonSignals(),
+            sleep: { [unowned h] seconds in
+                h.clock.advance(minutes: seconds / 60)
+                if h.clock.now >= exitAt { h.scanner.exit(4242) }
+            })
+        #expect(try daemon.serve() == .idle)
+        let retired = try #require(try h.state().retired.last)
+        #expect(retired.name == device.name)
+        #expect(retired.reason == .abandoned)
+        #expect(retired.retiredAt >= exitAt)
+        #expect(retired.retiredAt.timeIntervalSince(exitAt) <= Daemon.pollInterval)
+    }
+
     @Test func shutsDownAnIdleDeviceOnTime() throws {
         let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         try h.pool.release(device.name)

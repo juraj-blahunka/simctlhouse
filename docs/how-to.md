@@ -54,12 +54,49 @@ The skill only teaches agents the workflow, and it comes in the [Agent Skills](h
   ## iOS simulators
 
   Other agents share this machine's simulators, so never pick one yourself (`booted`, a device name, or one from `xcrun simctl list`).
-  Run `UDID=$(simctlhouse acquire --holder "<task>")` before building or testing, and use `-destination "id=$UDID"` and the UDID everywhere.
-  Run `simctlhouse renew "$UDID"` during long work and `simctlhouse release "$UDID"` when done, also after failures.
+  Run a single test or build command as `simctlhouse run --holder "<task>" -- xcodebuild test -scheme App`, without a `-destination`: it leases a simulator, adds the destination, and releases the simulator when the command exits.
+  For several steps that need the same simulator, run `UDID=$(simctlhouse acquire --holder "<task>")`, use the UDID everywhere, `simctlhouse renew "$UDID"` during long work, and `simctlhouse release "$UDID"` when done, also after failures.
   `simctlhouse --help` has the details.
   ```
 
 Set `SIMCTLHOUSE_HOLDER` in the agent's environment to label its leases without passing `--holder` every time.
+Without either, the label names the agent process and the directory it works in, such as `claude in app`, followed by the command for `run`; the full directory is in `history`.
+
+## Run a command on a leased device
+
+`simctlhouse run` wraps one command in a lease:
+
+```sh
+simctlhouse run --holder "$TASK_ID" -- xcodebuild test -scheme App
+```
+
+It leases a device as `acquire` does (the same `--family`, `--model`, `--os`, or a device name or UDID), runs the command, and releases the device when the command exits.
+The lease is bound to the `run` process instead of a timer, so it never needs `renew` and never expires mid-test; `list` shows `until pid <pid> exits` for it.
+The device is released however the command ends:
+
+- It exits, successfully or not: released, and `run` exits with the command's code.
+- Ctrl-C: the command gets the interrupt from the terminal, and `run` releases the device once the command has exited, then exits the same way the command did.
+- `SIGTERM`, `SIGINT` or `SIGHUP` sent to `run`: forwarded to the command.
+  If the command has not exited 15 seconds later, or a second signal arrives, it is killed together with every process it started.
+- `--timeout SECONDS` passes: the command is stopped the same way, and `run` exits with 124.
+- `run` itself is killed with `SIGKILL`: the daemon sees the process holding the lease is gone and reclaims the device within a minute, re-creating it under a new name like an expired lease, so anything the command left running loses it.
+- Someone releases or deletes the device while the command runs: `run` stops the command, so it cannot touch a device another agent may now hold, and exits with 125.
+
+How the command gets the device:
+
+- xcodebuild run directly (or through `xcrun`) gets `-destination id=<UDID>` added, unless it is listing or archiving (`-list`, `-showBuildSettings`, `archive`, ...).
+  A `-destination` naming another simulator is refused with exit code 125 before any device is leased; one naming the leased UDID or a `generic/` destination is kept.
+- `{udid}` and `{name}` in any argument are replaced: `simctlhouse run -- ./scripts/ui-tests.sh {udid}`.
+- The command's environment has `SIMCTLHOUSE_UDID`, `SIMCTLHOUSE_DEVICE` and `SIMCTLHOUSE_LEASE_ID`.
+
+`--count N` leases N devices at once, for xcodebuild to test on several simulators in parallel: it adds one `-destination` per device and runs the whole suite on each, or splits the test classes among them with `-parallelize-tests-among-destinations`.
+Other commands read the space-separated `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICES`; with more than one device, `{udid}`, `{name}` and the singular variables are not available.
+
+stdout belongs to the command; simctlhouse writes only to stderr, prefixed with `simctlhouse:`.
+The command runs in simctlhouse's process group with its stdin, stdout and stderr, so pipes, colours and Ctrl-C work as they would without simctlhouse.
+
+`run` is for one self-contained command, such as an end-to-end test run: the device goes back to the pool as soon as it exits, and the next `run` may get another one.
+Steps that must happen on the same device, such as installing an app, launching it, taking a screenshot and trying again, hold it across commands like a lock: lease it with `acquire` (next section).
 
 ## Use a device from a script or agent
 
@@ -115,8 +152,9 @@ The idle timeout is applied by whichever invocation runs garbage collection, and
 Expired leases and idle devices are cleaned up on time by a small background daemon, so they never wait for the next command.
 You do not need to manage it:
 
-- `acquire`, `release` and `renew` start it when it is not running.
+- `acquire`, `release`, `renew` and `run` start it when it is not running.
 - It sleeps until the next lease expires or a free device's idle time ends, cleans up then, and wakes at once when a command changes the pool.
+  While a `run` holds a device, it also checks every minute that the `run` process is still alive.
 - It exits on its own once nothing is leased, booted or in progress; with the defaults, about 15 minutes after the last device is released.
 - After an upgrade, the next `acquire`, `release` or `renew` replaces it with the new build.
 
@@ -194,6 +232,17 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 | 5 | Device is leased, busy, or used by another process (`acquire <name>`, `delete` / `erase` without `--force`), or was taken over because the command ran for over an hour |
 | 6 | `skill install` found no skill next to the binary, or something other than a simctlhouse link is in the way |
 | 64 | Invalid command-line usage, or an invalid `SIMCTLHOUSE_*_SECONDS` or `SIMCTLHOUSE_DAEMON` value |
+
+`run` exits with its command's code instead, so its own failures use codes commands rarely do, as `env` and `timeout` do:
+
+| Code | Meaning |
+| --- | --- |
+| the command's | The command exited with it |
+| 128+N | The command was ended by signal N; unless that is a crash signal such as SIGSEGV, `run` ends itself with the same signal, so a calling shell sees the interrupt |
+| 124 | `--timeout` passed and the command was stopped |
+| 125 | simctlhouse failed: any failure the table above lists for `acquire` (stderr names it), a refused command or `-destination`, invalid usage, or the lease ended while the command ran |
+| 126 | The command cannot be executed |
+| 127 | The command was not found |
 
 ## Run the tests
 

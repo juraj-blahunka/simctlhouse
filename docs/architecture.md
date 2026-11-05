@@ -25,7 +25,7 @@ Everything lives in `~/.simctlhouse` (override with `SIMCTLHOUSE_HOME`).
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "devices": [
     {
       "name": "amber-falcon",
@@ -56,6 +56,7 @@ Everything lives in `~/.simctlhouse` (override with `SIMCTLHOUSE_HOME`).
 ```
 
 A device being worked on also carries a `claim` (see Concurrency), and one being re-created after an expired lease a `replacedUDID` (see Garbage collection).
+A lease taken by `simctlhouse run` also carries an `owner`: the pid and start time of the `run` process (see run).
 The CoreSimulator state (`Booted` / `Shutdown`) is never stored; it is read live from `simctl list`.
 Dates are stored in whole seconds.
 
@@ -105,6 +106,26 @@ How the others are read:
 7. Print the UDID, or JSON with `--json`.
 8. Make sure the daemon runs (see Daemon).
 
+## run
+
+`simctlhouse run` (`Runner`) leases devices, runs one command on them, and releases them when it exits (D33, D34).
+
+1. Check the command: placeholders with `--count`, and an xcodebuild `-destination` that no lease could match, are refused before anything is leased (`RunCommand.check`).
+2. Acquire `--count` devices at the same time, each as `acquire` does, with the lease's `owner` set to this process.
+   If one fails, release the others.
+3. Make sure the daemon runs.
+4. Fill in the devices (`RunCommand`): replace `{udid}` and `{name}`, add `-destination id=<UDID>` per device to a direct xcodebuild, and refuse a `-destination` naming another simulator.
+5. Install the signal handlers, then start the command with `posix_spawnp`: in simctlhouse's process group, with its stdin, stdout and stderr, no other descriptor, and default signal handling.
+6. Wait in a loop on one inbox (`RunEvents`) fed by a thread blocked in `waitpid`, the signal handlers (through a pipe, the only thing a handler can safely do), and a watcher on the state directory:
+   - A signal is forwarded to the command, unless the terminal sent it to the whole foreground process group (Ctrl-C), which the command then received itself.
+     macOS does not report a reliable sender in `siginfo`, so a SIGINT, SIGQUIT or SIGHUP counts as the terminal's while simctlhouse is in the foreground of its controlling terminal.
+   - `--timeout`, or a state change after which a device no longer carries its lease, stops the command with SIGTERM.
+   - A command still running 15 seconds after it was stopped, or a second signal, gets SIGKILL, together with every process below it, read from the process table before the command dies and its children are re-parented.
+7. Release each lease by its id in one transaction, without GC or `simctl` calls (`Pool.releaseLease`), so it finishes before a caller follows its SIGTERM with a SIGKILL; still under the signal handlers, so a signal cannot cut it short.
+8. Make sure the daemon runs, restore the default signal handlers, and exit with the command's code, or die of the command's signal unless it is a crash signal.
+
+If `run` is killed before it can release, the lease's `owner` is gone and GC reclaims the device (see Garbage collection).
+
 ## Concurrency
 
 Every decision happens inside `StateStore.transaction`, which holds an exclusive `flock` for the read-modify-write and writes the file atomically.
@@ -138,6 +159,8 @@ GC runs at the start of every command, and in the daemon whenever something come
 2. Repairs abandoned `provisioning` and `maintenance` records (see Concurrency).
 3. Reclaims expired leases: retires the old name with its history, renames the record and moves it to `provisioning` with the old UDID set aside in `replacedUDID`, deletes and re-creates the simulator, and returns it `available` and shut down.
    Neither the old name nor the old UDID reaches the record from the moment of expiry, and the old simulator is never handed out, even if deleting it fails.
+   A lease with an `owner` never expires while that process runs (same pid and start time): GC moves its `expiresAt` forward instead, so readers that only know `expiresAt` still see a live lease.
+   Once the owner is gone, the lease is reclaimed the same way with the outcome `abandoned`, rather than released, because the command it ran may still be using the device.
 4. Shuts down free devices that have been booted and inactive for 15 minutes, unless a foreign process references them.
    The explicit `gc` command shuts down every free booted device without waiting.
 
@@ -155,7 +178,7 @@ In a loop, it:
 3. Sleeps until then.
    A state change wakes it at once, to re-read the deadlines: it watches the home directory, and every state write renames `state.json` into place.
 
-It collects at least every 60 seconds (`Daemon.pollInterval`), which bounds how late it notices that a crashed process left a claim behind, and at most once a second.
+It collects at least every 60 seconds (`Daemon.pollInterval`), which bounds how late it notices that a crashed process left a claim behind, or that a killed `run` left its lease, and at most once a second.
 A free device may be booted, so it counts as a deadline until a collection has run after its idle time was up; that collection shut it down if it was booted.
 The comparison allows a second of slack, as `state.json` keeps whole seconds.
 The daemon exits once `nextWake` finds nothing, so it runs only while something is leased, booted or in progress.
@@ -166,7 +189,7 @@ There is no port and no socket: commands never talk to the daemon.
 The daemon holds an exclusive `flock` on `daemon.lock` for its whole life and writes its `DaemonRecord` (pid, start time, version, binary) into that file.
 Whether a daemon runs is whether that lock is held; the kernel drops it when the daemon dies, so there is no stale pid file to second-guess.
 
-`acquire`, `release` and `renew` call `DaemonLauncher.ensureRunning` after their change has committed, unless `SIMCTLHOUSE_DAEMON=0`:
+`acquire`, `release`, `renew` and `run` call `DaemonLauncher.ensureRunning` after their change has committed, unless `SIMCTLHOUSE_DAEMON=0`:
 
 1. If `daemon.lock` is free, spawn `simctlhouse daemon serve --log-file --keep-alive 0` with `posix_spawn`: a new session (`POSIX_SPAWN_SETSID`), stdio on `/dev/null`, and no other descriptor inherited (`POSIX_SPAWN_CLOEXEC_DEFAULT`), so `UDID=$(simctlhouse acquire)` never waits for it.
    Two commands racing both spawn; the second daemon finds the lock held and exits.
@@ -195,7 +218,7 @@ It switches its output to `daemon.log` only once it holds the lock, keeping the 
 Leases and devices never disappear without a record.
 `PoolDevice.endLease` moves the current lease into the device's `history` (last 5) with an end time and outcome.
 `PoolState.retire` moves a device that leaves the pool into `retired` (last 50), with its history.
-Every removal goes through it: `delete`, a failed create or boot, a vanished simulator, abandoned provisioning, and the old name of an expired lease.
+Every removal goes through it: `delete`, a failed create or boot, a vanished simulator, abandoned provisioning, and the old name of an expired or abandoned lease.
 `history` matches a reference against current names and UDIDs, earlier UDIDs in lease records, and retired devices.
 
 ## Performance
@@ -210,4 +233,5 @@ Between deadlines the daemon costs nothing: it sleeps, and a state change only m
 `Pool` takes a `SimulatorBackend`, a `ProcessScanner`, a clock and a logger.
 Unit tests use `FakeBackend` (an in-memory CoreSimulator) and `TestClock` to cover expiry, idle shutdown, crash recovery and concurrent acquires without real simulators.
 `Daemon` takes its sleep as a function, so `DaemonTests` drive it through `TestClock`; `DaemonLauncher` takes its spawn and signal functions.
+`Runner` takes a `CommandLauncher` and `RunSignals`, so `RunnerTests` script the command's exit and the signals it gets through `FakeLauncher`, against a real state file and watcher.
 `SIMCTLHOUSE_HOME`, `SIMCTLHOUSE_LEASE_SECONDS` and `SIMCTLHOUSE_IDLE_SECONDS` (see D21) let end-to-end runs use real simulators in an isolated home with short timeouts, and `SIMCTLHOUSE_DAEMON=0` leaves the housekeeping to the commands.

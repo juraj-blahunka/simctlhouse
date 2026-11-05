@@ -48,6 +48,10 @@ import Testing
         #expect(Format.next(Self.device(.available, shutdownIn: -1)) == "shutdown due")
         #expect(Format.next(Self.device(.available)) == "-")
         #expect(Format.next(Self.device(.provisioning)) == "-")
+        // Bound to a `simctlhouse run`: held as long as that process runs, whatever its expiry says.
+        var bound = Self.device(.leased, expiresIn: 28 * 60)
+        bound.ownerPid = 4242
+        #expect(Format.next(bound) == "until pid 4242 exits")
     }
 
     @Test func releaseSaysHowLongTheDeviceStaysWarm() {

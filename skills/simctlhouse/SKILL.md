@@ -7,9 +7,42 @@ description: Get an exclusive iOS simulator (iPhone or iPad) for building, testi
 
 Other agents run on this machine at the same time.
 If you pick a simulator yourself (by name, `booted`, or from `simctl list`), you will collide with them and get random failures.
-Always lease a device from simctlhouse, use it only through its UDID, and release it when done.
+Always get your device from simctlhouse: wrap a single test or build command in `simctlhouse run`, or, for several steps on one device, lease it with `acquire`, use it only through its UDID, and release it when done.
 
-## Workflow
+## One command does the whole job: `simctlhouse run`
+
+When a single command does everything it needs the device for, such as an end-to-end `xcodebuild test`, wrap it in `simctlhouse run`:
+
+```sh
+simctlhouse run --holder "<short task label>" -- xcodebuild test -scheme App
+```
+
+It leases a device, boots it, runs the command, and releases the device when the command exits, also when it fails, is interrupted or is killed.
+The lease lasts as long as the command, so there is nothing to renew and nothing to forget.
+
+- xcodebuild gets `-destination id=<UDID>` added.
+  Do not pass a simulator `-destination` yourself: one naming another simulator (`name=...`, `booted`) is refused with exit code 125.
+  `generic/platform=iOS Simulator` is fine.
+- A test command other than xcodebuild gets the device through `{udid}` and `{name}` in its arguments, or `$SIMCTLHOUSE_UDID` and `$SIMCTLHOUSE_DEVICE`:
+
+  ```sh
+  simctlhouse run -- ./scripts/ui-tests.sh {udid}
+  ```
+
+- Device options are those of `acquire` (below): `--family`, `--model`, `--os`, or a device name or UDID.
+- `--count N` leases N devices; xcodebuild then tests on all of them at once (add `-parallelize-tests-among-destinations` to split the tests instead).
+  Other commands read the space-separated `$SIMCTLHOUSE_UDIDS`.
+- `--timeout SECONDS` stops the command after that long, with exit code 124.
+- stdout is the command's own; simctlhouse's messages go to stderr, prefixed with `simctlhouse:`.
+- If your shell tool times out sooner than the command may take, run it in the background rather than under that timeout.
+
+`run` holds the device only while its one command runs, and hands it back the moment the command exits.
+Two `run`s may get two different devices, so never split steps that need the same device (build then install, install then launch, launch then screenshot) across `run`s, and do not chain them into one `run` with `sh -c` either.
+Use `acquire` and `release` for those.
+
+## Several steps on one device: acquire and release
+
+When steps must happen on the same device, such as install, launch, screenshot, look, change and repeat, hold the device across them like a lock: acquire it, use it, release it.
 
 1. Acquire a device. stdout is just the UDID; progress messages go to stderr.
 
@@ -39,14 +72,15 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
 
 ## Rules
 
-- Always pass `--holder` with a label that says who you are and what you are doing; `simctlhouse history` shows it to whoever investigates later.
+- Always pass `--holder` with a label that says who you are and what you are doing; `simctlhouse list` and `history` show it to whoever investigates later.
+  Without it, the label names your agent process and directory, which says little about the task.
 - One lease per task.
   Reuse your UDID for every build and test in the task; do not acquire again for each command.
-- Leases expire a fixed time after `acquire` returns or the last renew: 30 minutes by default, or `$SIMCTLHOUSE_LEASE_SECONDS`.
+- A lease from `acquire` expires a fixed time after `acquire` returns or the last renew (`run` needs no renew): 30 minutes by default, or `$SIMCTLHOUSE_LEASE_SECONDS`.
   `acquire` and `renew` print how long you have (`expiresAt` in `--json`).
   An expired device is re-created under a new name and handed to someone else, on time even while you are busy in a long build: the old name and UDID then fail with exit code 3.
   If your work may run longer, run `simctlhouse renew "$UDID"` before each long step, at the latest when two thirds of the lease have passed.
-- `acquire`, `release` and `renew` start a background daemon (`simctlhouse daemon serve`) that enforces lease expiry and idle shutdown on time, and exits on its own once the pool is idle.
+- `acquire`, `release`, `renew` and `run` start a background daemon (`simctlhouse daemon serve`) that enforces lease expiry and idle shutdown on time, and exits on its own once the pool is idle.
   Leave it alone: do not stop, kill or start it, and do not set `SIMCTLHOUSE_DAEMON`.
 - Released devices stay booted for the next agent until they have been idle for 15 minutes, and are not erased.
   `release` and `list` say when a free device shuts down (`shutdownAt` in `--json`).
@@ -59,7 +93,19 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
   simctlhouse release "$UDID" --lease-id "$LEASE_ID"
   ```
 
-## Exit codes
+## Exit codes of `run`
+
+`run` exits with its command's own code, or 128+N if signal N ended the command.
+simctlhouse's own failures use codes commands rarely do:
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| 124 | `--timeout` passed; the command was stopped | Raise the timeout, or find out why the command hangs |
+| 125 | simctlhouse failed: no device (stderr names the reason as for `acquire` below), a refused `-destination`, invalid usage, or the lease ended mid-run because someone released or deleted the device | Read stderr; fix the command, or run it again |
+| 126 | The command cannot be executed | Fix the command |
+| 127 | The command was not found | Fix the command or `PATH` |
+
+## Exit codes of the other commands
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
@@ -80,7 +126,7 @@ Every command that takes a device accepts its name or its UDID.
 - `simctlhouse udid <name>` prints the UDID of a device you know by name.
 - `simctlhouse history [<name|udid>]` shows who held a device, when, and how each lease ended (released, expired, vanished, ...).
   Use it when a device disappeared or misbehaved; old names and UDIDs still resolve.
-- `simctlhouse renew <udid>` extends your lease by a full lease length from now.
+- `simctlhouse renew <udid>` extends an `acquire` lease by a full lease length from now.
 - `simctlhouse create [--family ipad]` pre-provisions a free device.
 - `simctlhouse erase <name>` wipes a free device's contents and settings.
 - `simctlhouse delete <name>` deletes a device.

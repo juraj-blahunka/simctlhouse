@@ -24,6 +24,8 @@ import Testing
             (.skillConflict(paths: ["~/.claude/skills/simctlhouse"]), 6),
             (.notASkill("/tmp/skill"), 6),
             (.invalidEnvironment(variable: "SIMCTLHOUSE_DAEMON", value: "yes", expected: "0 or 1"), 64),
+            // `run` reports it as 125, like its other own failures (D34); elsewhere it is a usage error.
+            (.invalidRunCommand("-destination 'id=booted' is not the leased simulator"), 64),
         ] as [(SimctlHouseError, Int32)])
     func everyFailureClassKeepsItsExitCode(error: SimctlHouseError, code: Int32) {
         #expect(error.exitCode == code)
@@ -34,7 +36,8 @@ import Testing
     private func listedAbove(_ error: SimctlHouseError) {
         switch error {
         case .simctlFailed, .xcodeRequired, .corruptState, .io, .unknownModel, .unsupportedModel, .noRuntime, .deviceNotFound, .leaseMismatch, .notLeased,
-            .deviceLeased, .deviceBusy, .deviceInUse, .takenOver, .skillNotShipped, .skillConflict, .notASkill, .invalidEnvironment:
+            .deviceLeased, .deviceBusy, .deviceInUse, .takenOver, .skillNotShipped, .skillConflict, .notASkill, .invalidEnvironment,
+            .invalidRunCommand:
             break
         }
     }

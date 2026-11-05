@@ -8,11 +8,12 @@ struct SimctlHouse: ParsableCommand {
         commandName: "simctlhouse",
         abstract: "Device Hub for Agents: a pool of iOS simulators that agents lease exclusively.",
         discussion: """
-            Each agent acquires its own simulator, uses it via its UDID, and releases it when done.
+            Each agent acquires its own simulator, uses it via its UDID, and releases it when done,
+            or wraps a command in `run`, which does all three: `simctlhouse run -- xcodebuild test -scheme App`.
             Leases expire after 30 minutes (extend with `renew`); expired devices are re-created under a new name and returned to the pool.
             Free devices shut down after 15 minutes of inactivity. simctlhouse only touches devices it created.
             Both timeouts can be changed with environment variables, see below; an idle time of 0 shuts free devices down on the next command.
-            `acquire`, `release` and `renew` start a background daemon that enforces both on time; it exits once the pool is idle.
+            `acquire`, `release`, `renew` and `run` start a background daemon that enforces both on time; it exits once the pool is idle.
             Wherever a command takes a device, its name and its UDID both work.
 
             Machine-readable output goes to stdout, human messages to stderr.
@@ -21,16 +22,32 @@ struct SimctlHouse: ParsableCommand {
             Environment:
               SIMCTLHOUSE_LEASE_SECONDS  lease length in seconds (default 1800)
               SIMCTLHOUSE_IDLE_SECONDS   idle seconds before shutdown (default 900)
-              SIMCTLHOUSE_HOLDER         default --holder label
+              SIMCTLHOUSE_HOLDER         default --holder label (otherwise: the agent and directory)
               SIMCTLHOUSE_HOME           state directory (default ~/.simctlhouse)
               SIMCTLHOUSE_DAEMON         0 to never start the daemon (default 1)
             """,
         version: "0.1.1",
         subcommands: [
-            Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self, DaemonCommand.self,
-            Home.self, Skill.self,
+            Acquire.self, Release.self, Renew.self, Run.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self,
+            DaemonCommand.self, Home.self, Skill.self,
         ]
     )
+
+    /// `run` reports its own failures with 125, so they never look like an exit code of the command it wraps (D34).
+    /// ArgumentParser exits with 64 for a usage error before `Run.run` gets a say, so map that here.
+    static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        do {
+            var command = try parseAsRoot(arguments)
+            try command.run()
+        } catch {
+            if arguments.first == Run.configuration.commandName, exitCode(for: error) == .validationFailure {
+                FileHandle.standardError.write(Data((fullMessage(for: error) + "\n").utf8))
+                Foundation.exit(RunExitCode.failed)
+            }
+            exit(withError: error)
+        }
+    }
 }
 
 // MARK: - Shared options
@@ -123,7 +140,7 @@ struct Acquire: ParsableCommand {
     @OptionGroup var spec: SpecOptions
     @OptionGroup var output: OutputOptions
 
-    @Option(name: .long, help: "Label identifying the agent/task holding the lease. Default: $SIMCTLHOUSE_HOLDER.")
+    @Option(name: .long, help: "Label identifying the agent/task holding the lease. Default: $SIMCTLHOUSE_HOLDER, else the agent and directory.")
     var holder: String?
 
     func validate() throws {
@@ -135,7 +152,7 @@ struct Acquire: ParsableCommand {
             let request = AcquireRequest(
                 spec: spec.spec,
                 device: device,
-                holder: holder ?? ProcessInfo.processInfo.environment["SIMCTLHOUSE_HOLDER"],
+                holder: holder ?? ProcessInfo.processInfo.environment["SIMCTLHOUSE_HOLDER"] ?? DefaultHolder.label(),
                 pid: getppid(),
                 cwd: FileManager.default.currentDirectoryPath
             )
@@ -190,6 +207,97 @@ struct Renew: ParsableCommand {
             }
         }
     }
+}
+
+struct Run: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "run",
+        abstract: "Lease a device, run a command on it, and release the device when the command exits.",
+        discussion: """
+            simctlhouse run --holder "fix login" -- xcodebuild test -scheme App
+
+            run is for one self-contained command, such as an end-to-end test run: the device goes back to the pool \
+            when the command exits, and the next run may get another. For several steps on one device \
+            (install, launch, screenshot), use acquire and release.
+
+            xcodebuild run directly gets -destination id=<UDID> added; a -destination naming another simulator is \
+            refused. Elsewhere, {udid} and {name} in the command are replaced, and the command sees \
+            $SIMCTLHOUSE_UDID, $SIMCTLHOUSE_DEVICE and $SIMCTLHOUSE_LEASE_ID. With --count N, xcodebuild gets one \
+            -destination per device (it tests on all of them at once), and other commands read the space-separated \
+            $SIMCTLHOUSE_UDIDS and $SIMCTLHOUSE_DEVICES.
+
+            The lease lasts as long as the command: no renew needed. The devices are released however the command \
+            ends, also on failure, Ctrl-C or SIGTERM (forwarded to the command, which is killed if it has not exited \
+            15s later). If simctlhouse itself is killed, the devices are reclaimed within a minute. stdout is the \
+            command's alone; simctlhouse writes to stderr, prefixed with "simctlhouse:".
+
+            Exit code: the command's own, or 128+N if signal N ended it. simctlhouse's own failures use codes \
+            commands rarely do: 124 --timeout passed, 125 simctlhouse failed (see stderr; also when the lease was \
+            lost mid-run), 126 the command cannot be executed, 127 the command was not found.
+            """
+    )
+
+    @Argument(help: ArgumentHelp("Lease this free pool device instead of any matching one.", valueName: DeviceRef.valueName))
+    var device: String?
+
+    @OptionGroup var spec: SpecOptions
+
+    @Option(name: .long, help: "Label identifying the agent/task holding the lease. Default: $SIMCTLHOUSE_HOLDER, else the agent, directory and command.")
+    var holder: String?
+
+    @Option(name: .long, help: "How many devices to lease, for xcodebuild testing on several simulators at once.")
+    var count = 1
+
+    @Option(name: .long, help: ArgumentHelp("Stop the command after this many seconds and exit with 124.", valueName: "seconds"))
+    var timeout: Double?
+
+    @Argument(parsing: .postTerminator, help: ArgumentHelp("The command to run, after --.", valueName: "command"))
+    var command: [String] = []
+
+    func validate() throws {
+        if device != nil && !spec.isEmpty { throw ValidationError("Pass a device name/UDID or --family/--model/--os, not both.") }
+        if count < 1 { throw ValidationError("--count must be 1 or more.") }
+        if device != nil && count > 1 { throw ValidationError("A specific device is one device; drop --count or the device.") }
+        if let timeout, !(timeout > 0 && timeout.isFinite) { throw ValidationError("--timeout must be more than 0 seconds.") }
+        if command.isEmpty { throw ValidationError("Pass the command after --, e.g. simctlhouse run -- xcodebuild test -scheme App.") }
+    }
+
+    func run() throws {
+        let outcome: RunOutcome
+        do {
+            let daemonEnabled = try DaemonLauncher.isEnabled()
+            let pool = try Runtime.pool(log: Self.note)
+            let launcher = DaemonLauncher(paths: pool.store.paths)
+            let runner = Runner(pool: pool, log: Self.note) {
+                guard daemonEnabled else { return }
+                do { try launcher.ensureRunning() } catch { Self.note("warning: could not start the simctlhouse daemon: \(error)") }
+            }
+            let environment = ProcessInfo.processInfo.environment
+            let request = AcquireRequest(
+                spec: spec.spec,
+                device: device,
+                holder: holder ?? environment["SIMCTLHOUSE_HOLDER"] ?? DefaultHolder.label(command: command),
+                pid: getppid(),
+                cwd: FileManager.default.currentDirectoryPath
+            )
+            outcome = try runner.run(RunRequest(acquire: request, count: count, command: command, timeout: timeout, environment: environment))
+        } catch {
+            Self.note("error: \((error as? SimctlHouseError)?.description ?? "\(error)")")
+            throw ExitCode(RunExitCode.failed)
+        }
+        if case .signaled(let signal) = outcome, Self.reraised.contains(signal) {
+            // Die of the same signal, so a calling shell sees the command was interrupted (and stops its script on Ctrl-C).
+            Darwin.signal(signal, SIG_DFL)
+            kill(getpid(), signal)
+        }
+        if outcome.exitCode != 0 { throw ExitCode(outcome.exitCode) }
+    }
+
+    /// Signals that end a process without a crash report. Re-raising a crash signal (SIGSEGV, SIGABRT) would file
+    /// a crash report against simctlhouse, so the command's crash is reported as 128+N instead.
+    static let reraised: Set<Int32> = [SIGINT, SIGTERM, SIGHUP, SIGKILL, SIGPIPE, SIGALRM, SIGUSR1, SIGUSR2]
+
+    static func note(_ message: String) { Runtime.note("simctlhouse: \(message)") }
 }
 
 struct UDID: ParsableCommand {
@@ -806,6 +914,7 @@ enum Format {
 
     /// What the daemon does to the device next, and when: a lease expiring, or a free device shutting down.
     static func next(_ device: DeviceInfo) -> String {
+        if device.status == .leased, let pid = device.ownerPid { return "until pid \(pid) exits" }
         if device.status == .leased, let expiresAt = device.expiresAt {
             let left = minutes(until: expiresAt)
             return left == "expired" ? "expired" : "expires in \(left)"

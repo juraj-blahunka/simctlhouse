@@ -20,31 +20,54 @@ brew install juraj-blahunka/tap/simctlhouse
 simctlhouse skill install   # links the skill into every coding agent it finds
 ```
 
-With the skill loaded, an agent's test run looks like this:
+## How agents use it
+
+With the skill loaded, an agent picks one of two ways to get a simulator, depending on whether one command does the whole job.
+
+### One command, start to finish
+
+When a single command does everything that needs the simulator, such as an end-to-end test run, the agent wraps it in `run`:
 
 ```sh
-UDID=$(simctlhouse acquire --holder "fix login test")   # lease + boot a free iPhone, print its UDID
-xcodebuild test -scheme App -destination "id=$UDID"
-simctlhouse release "$UDID"                             # back to the pool, still booted for the next agent
+simctlhouse run --holder "fix login test" -- xcodebuild test -scheme App
 ```
 
-`simctlhouse list` shows who holds what, and what happens next (UDIDs shortened here):
+`run` leases and boots a free iPhone, adds `-destination id=<UDID>` to xcodebuild, and hands the device back to the pool, still booted for the next agent, as soon as the command exits.
+The lease lasts exactly as long as the command, so it cannot be forgotten or run out mid-test, and the device comes back even when the command fails, is interrupted or is killed.
+
+### Several steps on the same simulator
+
+Installing an app, launching it, taking a screenshot and trying again all have to happen on the same device.
+Two `run`s may get two different devices, so here the agent holds the simulator across the steps, like a lock:
+
+```sh
+UDID=$(simctlhouse acquire --holder "check onboarding screen")   # lease + boot a free iPhone, print its UDID
+xcrun simctl install "$UDID" build/App.app
+xcrun simctl launch "$UDID" com.example.app
+xcrun simctl io "$UDID" screenshot onboarding.png
+simctlhouse release "$UDID"                                      # back to the pool, still booted for the next agent
+```
+
+A lease from `acquire` runs out after 30 minutes unless the agent renews it, so a forgotten release cannot hold a device forever.
+
+### Who holds what
+
+`simctlhouse list` shows every device, who holds it, and what happens to it next (UDIDs shortened here):
 
 ```
-NAME           STATUS     STATE     MODEL          OS    HOLDER          NEXT             UDID
-amber-falcon   leased     Booted    iPhone 18 Pro  27.2  fix login test  expires in 28m   6F1C...
-wild-dragon    leased     Booted    iPhone 18 Pro  27.2  snapshot tests  expires in 11m   A93E...
-plucky-papaya  available  Booted    iPhone 18 Pro  27.2  -               shutdown in 12m  0B7D...
-ready-lion     available  Shutdown  iPhone 18 Pro  27.2  -               -                D42A...
+NAME           STATUS     STATE     MODEL          OS    HOLDER                   NEXT                   UDID
+amber-falcon   leased     Booted    iPhone 18 Pro  27.2  fix login test           until pid 81234 exits  6F1C...
+wild-dragon    leased     Booted    iPhone 18 Pro  27.2  check onboarding screen  expires in 28m         A93E...
+plucky-papaya  available  Booted    iPhone 18 Pro  27.2  -                        shutdown in 12m        0B7D...
+ready-lion     available  Shutdown  iPhone 18 Pro  27.2  -                        -                      D42A...
 ```
-
-Every command takes a device name or UDID, prints machine-readable output on stdout (`--json` for structured data), sends everything human to stderr, and reports failures as stable [exit codes](docs/how-to.md#exit-codes), so agents and scripts can act on them.
 
 ## What it does
 
 - **Agent skill included.** [`skills/simctlhouse/SKILL.md`](skills/simctlhouse/SKILL.md) tells agents when to lease, how to use the UDID, when to renew, and to release when done, also after failures.
   `brew upgrade` updates it together with the binary.
 - **Exclusive leases.** A device is handed to one agent at a time.
+- **Leases that cannot leak.** `simctlhouse run` wraps a command in a lease that lasts exactly as long as the command, released however it ends; if simctlhouse itself is killed, the device is reclaimed within a minute.
 - **Pooling.** Released devices are reused, still booted, by the next agent asking for the same model and OS.
 - **Plain simulators.** Devices are ordinary simulators made with `simctl create`, visible in Xcode.
   A new device's first boot takes about 25s, a reused one is ready immediately.
@@ -61,7 +84,7 @@ The pool is one JSON file, `~/.simctlhouse/state.json`.
 Every command reads and changes it under a file lock, so agents running commands at the same time never step on each other; there is no server.
 Before doing its own work, every command does the housekeeping: it reclaims expired leases, shuts down devices that have been idle too long, and repairs anything a crashed command left half done.
 
-So that the housekeeping also happens when no command runs, `acquire`, `release` and `renew` start a background daemon if none is running.
+So that the housekeeping also happens when no command runs, `acquire`, `release`, `renew` and `run` start a background daemon if none is running.
 It sleeps until the next lease expires or a free device's idle time ends, does the housekeeping then, and wakes at once whenever a command changes the pool.
 It talks to no one; like the commands, it only reads and writes the state file.
 It exits on its own once nothing is leased, booted or in progress, and after an upgrade the next command replaces it with the new build.
@@ -74,6 +97,7 @@ To test or watch it without leasing a device, `simctlhouse daemon start` keeps i
 | --- | --- |
 | `acquire [--family iphone\|ipad] [--model NAME] [--os VERSION] [--holder LABEL] [--json]` | Lease a free matching device or create one, boot it, print the UDID |
 | `acquire <name\|udid> [--holder LABEL] [--json]` | Lease that specific free device |
+| `run [<name\|udid> \| --family --model --os] [--count N] [--timeout SECONDS] [--holder LABEL] -- COMMAND...` | Lease devices for as long as COMMAND runs, then release them; exits with COMMAND's code |
 | `release <name\|udid> [--lease-id ID]` | Return a device to the pool |
 | `renew <name\|udid> [--lease-id ID]` | Extend a lease by a full lease length from now |
 | `list [booted\|leased\|<search term>...] [--json]` | Show devices, filtered like `simctl list devices` |
@@ -92,7 +116,7 @@ To test or watch it without leasing a device, `simctlhouse daemon start` keeps i
 Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--family ipad`, on the newest installed iOS runtime that supports it.
 Devices are named with two random words, such as `amber-falcon`.
 Every command that takes a device accepts its name or its UDID.
-`--json` has the short form `-j`, as in `simctl list -j`.
+Commands print machine-readable output on stdout (`--json` for structured data, short form `-j` as in `simctl list -j`), send everything human to stderr, and report failures as stable [exit codes](docs/how-to.md#exit-codes), so agents and scripts can act on them.
 
 ## Configuration
 
@@ -100,7 +124,7 @@ Every command that takes a device accepts its name or its UDID.
 | --- | --- | --- |
 | `SIMCTLHOUSE_LEASE_SECONDS` | `1800` | Lease length; a lease not renewed within it is reclaimed |
 | `SIMCTLHOUSE_IDLE_SECONDS` | `900` | How long a free booted device may sit idle before it is shut down; `0` shuts it down right away |
-| `SIMCTLHOUSE_HOLDER` | | Default `--holder` label |
+| `SIMCTLHOUSE_HOLDER` | the agent and directory | Default `--holder` label, such as `claude in app` (and the command, for `run`) |
 | `SIMCTLHOUSE_HOME` | `~/.simctlhouse` | Where the pool's state lives |
 | `SIMCTLHOUSE_DAEMON` | `1` | `0` keeps commands from starting the daemon, for CI or a throwaway home |
 

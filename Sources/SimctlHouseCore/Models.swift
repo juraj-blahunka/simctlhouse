@@ -4,7 +4,7 @@ import Foundation
 public struct PoolState: Codable, Equatable, Sendable {
     /// Bump with every change to what `state.json` holds. A build refuses a newer file, so it never drops fields it does
     /// not know; new fields must be optional, so an older file still decodes.
-    public static let currentVersion = 1
+    public static let currentVersion = 2
     /// How many deleted, vanished or reclaimed devices `history` can still report on.
     public static let retiredLimit = 50
 
@@ -157,6 +157,21 @@ public struct Lease: Codable, Equatable, Sendable {
     public var cwd: String?
     public var acquiredAt: Date
     public var expiresAt: Date
+    /// The process the lease is bound to (`simctlhouse run`), if any. While it runs, the lease does not expire;
+    /// once it is gone, GC reclaims the device, since nothing will release it any more (D33).
+    public var owner: ProcessRef? = nil
+}
+
+/// A running process, identified by its pid and start time, so a recycled pid is not mistaken for it.
+public struct ProcessRef: Codable, Equatable, Sendable {
+    public var pid: Int32
+    /// When `pid` started, in whole seconds; nil if it could not be read.
+    public var processStartedAt: Date?
+
+    public init(pid: Int32, processStartedAt: Date?) {
+        self.pid = pid
+        self.processStartedAt = processStartedAt
+    }
 }
 
 /// Why a lease ended or a device left the pool.
@@ -173,7 +188,7 @@ public enum EndReason: String, Codable, Sendable {
     case vanished
     /// Creating or booting the simulator failed.
     case failed
-    /// The process creating it died midway.
+    /// The process creating it died midway, or the `run` process holding the lease exited without releasing it.
     case abandoned
     /// Its runtime was uninstalled, so it could not be rebuilt.
     case runtimeRemoved

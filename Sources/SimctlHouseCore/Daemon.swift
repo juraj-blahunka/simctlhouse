@@ -292,16 +292,21 @@ public struct Daemon: Sendable {
         return nil
     }
 
-    /// Wakes the daemon whenever an entry in `directory` changes: every state write renames `state.json` into place.
+    /// Wakes the daemon whenever the state changes.
     private func watch(_ directory: URL) throws -> DispatchSourceFileSystemObject {
-        let descriptor = open(directory.path, O_EVTONLY | O_CLOEXEC)
-        guard descriptor >= 0 else { throw SimctlHouseError.io("Cannot watch \(directory.path): \(String(cString: strerror(errno)))") }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .delete, .rename])
-        source.setEventHandler { [signals] in signals.stateChanged() }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        return source
+        try watchState(in: directory) { [signals] in signals.stateChanged() }
     }
+}
+
+/// Calls `onChange` whenever an entry in `directory` changes: every state write renames `state.json` into place.
+func watchState(in directory: URL, onChange: @escaping @Sendable () -> Void) throws -> DispatchSourceFileSystemObject {
+    let descriptor = open(directory.path, O_EVTONLY | O_CLOEXEC)
+    guard descriptor >= 0 else { throw SimctlHouseError.io("Cannot watch \(directory.path): \(String(cString: strerror(errno)))") }
+    let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .delete, .rename])
+    source.setEventHandler(handler: onChange)
+    source.setCancelHandler { close(descriptor) }
+    source.resume()
+    return source
 }
 
 /// How commands find, start, replace and stop the daemon.

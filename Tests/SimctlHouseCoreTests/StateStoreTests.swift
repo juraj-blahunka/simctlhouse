@@ -57,7 +57,7 @@ import Testing
 
     @Test func stateOfANewerVersionIsRefusedAndKept() throws {
         try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
-        let newer = #"{"version": 2, "devices": [], "somethingNew": true}"#
+        let newer = #"{"version": \#(PoolState.currentVersion + 1), "devices": [], "somethingNew": true}"#
         try Data(newer.utf8).write(to: paths.stateFile)
         let error = try #require(throws: SimctlHouseError.self) { try store.transaction { $0.devices.removeAll() } }
         #expect(error.exitCode == 1)
@@ -68,8 +68,10 @@ import Testing
     @Test func stateOfAnOlderVersionIsReadAndWrittenAsTheCurrentOne() throws {
         try addDevice()
         let current = try String(contentsOf: paths.stateFile, encoding: .utf8)
-        try Data(current.replacingOccurrences(of: #""version" : 1"#, with: #""version" : 0"#).utf8).write(to: paths.stateFile)
-        #expect(try String(contentsOf: paths.stateFile, encoding: .utf8).contains(#""version" : 0"#))
+        let older = PoolState.currentVersion - 1
+        try Data(current.replacingOccurrences(of: #""version" : \#(PoolState.currentVersion)"#, with: #""version" : \#(older)"#).utf8)
+            .write(to: paths.stateFile)
+        #expect(try String(contentsOf: paths.stateFile, encoding: .utf8).contains(#""version" : \#(older)"#))
         #expect(try store.snapshot().devices.map(\.name) == ["brave-otter"])
         #expect(try store.snapshot().version == PoolState.currentVersion)
     }

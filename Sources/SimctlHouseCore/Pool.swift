@@ -40,13 +40,19 @@ public struct AcquireRequest: Sendable {
     public var holder: String?
     public var pid: Int32?
     public var cwd: String?
+    /// Binds the lease to this running process (`simctlhouse run`): it does not expire while the process runs,
+    /// and the device is reclaimed once the process is gone.
+    public var owner: Int32?
 
-    public init(spec: DeviceSpec = DeviceSpec(), device: String? = nil, holder: String? = nil, pid: Int32? = nil, cwd: String? = nil) {
+    public init(
+        spec: DeviceSpec = DeviceSpec(), device: String? = nil, holder: String? = nil, pid: Int32? = nil, cwd: String? = nil, owner: Int32? = nil
+    ) {
         self.spec = spec
         self.device = device
         self.holder = holder
         self.pid = pid
         self.cwd = cwd
+        self.owner = owner
     }
 }
 
@@ -67,6 +73,8 @@ public struct DeviceInfo: Codable, Equatable, Sendable {
     /// When idle shutdown is due for a free, booted device; nil otherwise.
     /// An estimate that only moves later: use outside the pool, such as a run from Xcode, postpones it.
     public var shutdownAt: Date? = nil
+    /// The process the lease is bound to (`simctlhouse run`); the lease lasts until it exits, whatever `expiresAt` says.
+    public var ownerPid: Int32? = nil
 }
 
 /// A device's audit trail, returned by `history`. Covers devices in the pool and devices that left it.
@@ -159,7 +167,8 @@ public struct Pool: Sendable {
                 pid: request.pid,
                 cwd: request.cwd,
                 acquiredAt: now,
-                expiresAt: now.addingTimeInterval(config.leaseDuration)
+                expiresAt: now.addingTimeInterval(config.leaseDuration),
+                owner: request.owner.map { ProcessRef(pid: $0, processStartedAt: scanner.startTime(of: $0)) }
             )
             let live = try liveDevices()
 
@@ -308,6 +317,31 @@ public struct Pool: Sendable {
             return device.name
         }
         return try info(for: name)
+    }
+
+    /// Ends the lease `leaseId` the way `release` does, for `simctlhouse run` once its command has exited.
+    /// One short transaction without GC or `simctl` calls, so it finishes before an impatient caller follows its
+    /// SIGTERM with a SIGKILL; the daemon collects garbage anyway. Returns the device's name, or nil if no device
+    /// carries the lease any more (released or deleted by someone else).
+    @discardableResult
+    public func releaseLease(_ leaseId: String) throws -> String? {
+        try store.transaction { state -> String? in
+            guard let index = state.devices.firstIndex(where: { $0.lease?.id == leaseId }) else { return nil }
+            // A forced erase or delete in progress ends the lease itself once its work is done.
+            guard state.devices[index].status == .leased else { return state.devices[index].name }
+            let now = now()
+            state.devices[index].endLease(.released, at: now)
+            state.devices[index].transition(to: .available, at: now)
+            state.devices[index].lastActivityAt = now
+            return state.devices[index].name
+        }
+    }
+
+    /// The leases among `leaseIds` that some device still carries. Reads the state without collecting garbage,
+    /// so `run` can watch its leases cheaply on every state change.
+    public func heldLeases(_ leaseIds: [String]) throws -> Set<String> {
+        let carried = Set(try store.snapshot().devices.compactMap(\.lease?.id))
+        return Set(leaseIds.filter(carried.contains))
     }
 
     // MARK: - create / delete / erase / list / history
@@ -529,7 +563,7 @@ public struct Pool: Sendable {
     /// so a caller can use it instead of listing devices again.
     private func runGarbageCollection(shutDownAllFree: Bool = false) throws -> (report: GCReport, untouchedLive: [String: SimDevice]?) {
         enum Job {
-            case reclaim(PoolDevice, newName: String, Claim)
+            case reclaim(PoolDevice, newName: String, Claim, EndReason)
             case shutdown(PoolDevice, Claim)
             case discard(PoolDevice, udids: [String], Claim)
         }
@@ -589,13 +623,20 @@ public struct Pool: Sendable {
                     }
                 }
 
-                if device.status == .leased, let lease = device.lease, lease.expiresAt <= now {
+                if device.status == .leased, let lease = device.lease, let owner = lease.owner, isAlive(owner) {
+                    // Bound to a running `simctlhouse run`: the lease lasts as long as that process. Keep its expiry
+                    // ahead, so readers that only know `expiresAt` (older JSON consumers, `nextWake`) see a live lease.
+                    if lease.expiresAt <= now { device.lease?.expiresAt = now.addingTimeInterval(config.leaseDuration) }
+                } else if device.status == .leased, let lease = device.lease, lease.owner != nil || lease.expiresAt <= now {
+                    // Expired, or its `run` process is gone without releasing it: then its command may still be running
+                    // as an orphan, so the device is reclaimed like an expired one rather than released.
                     // Rename right away so a stale agent can no longer address the device by its old name.
                     // The old identity and its lease history move to `retired`; the re-created device starts fresh.
                     // Until then the record is `provisioning` and the old UDID sits in `replacedUDID`,
                     // so neither the old name nor the old UDID reaches it, and it is never handed out.
+                    let reason: EndReason = lease.owner == nil ? .expired : .abandoned
                     let newName = freshName(state: state, live: live, alsoAvoiding: keep.map(\.name))
-                    state.retire(device, reason: .expired, at: now)
+                    state.retire(device, reason: reason, at: now)
                     device.lease = nil
                     device.history = []
                     device.createdAt = now
@@ -603,7 +644,7 @@ public struct Pool: Sendable {
                     device.udid = nil
                     let claim = newClaim()
                     device.begin(.provisioning, claim: claim, at: now)
-                    jobs.append(.reclaim(device, newName: newName, claim))
+                    jobs.append(.reclaim(device, newName: newName, claim, reason))
                     report.reclaimed.append(device.name)
                     device.name = newName
                 } else if device.status == .available, let udid = device.udid, live[udid]?.isBooted == true {
@@ -625,8 +666,12 @@ public struct Pool: Sendable {
         // Each job touches a different simulator, so they run in parallel.
         concurrentForEach(jobs) { job in
             switch job {
-            case .reclaim(let device, let newName, let claim):
-                log("Lease on \(device.name) expired; re-creating it and returning it to the pool as \(newName).")
+            case .reclaim(let device, let newName, let claim, let reason):
+                if reason == .abandoned {
+                    log("The process holding \(device.name) exited without releasing it; re-creating it and returning it to the pool as \(newName).")
+                } else {
+                    log("Lease on \(device.name) expired; re-creating it and returning it to the pool as \(newName).")
+                }
                 do {
                     try recycle(device, as: newName, claim: claim)
                 } catch {
@@ -713,8 +758,13 @@ public struct Pool: Sendable {
     private func isAbandoned(_ device: PoolDevice, now: Date) -> Bool {
         if now.timeIntervalSince(device.statusChangedAt) > config.hungOperation { return true }
         guard let claim = device.claim else { return false }
-        guard let started = scanner.startTime(of: claim.pid) else { return true }
-        return claim.processStartedAt.map { $0 != started } ?? false
+        return !isAlive(ProcessRef(pid: claim.pid, processStartedAt: claim.processStartedAt))
+    }
+
+    /// Whether `process` still runs: its pid exists and, when its start time is known, started then (not a recycled pid).
+    private func isAlive(_ process: ProcessRef) -> Bool {
+        guard let started = scanner.startTime(of: process.pid) else { return false }
+        return process.processStartedAt.map { $0 == started } ?? true
     }
 
     /// Creates the simulator for a `provisioning` record and moves it to `finalStatus`.
@@ -839,7 +889,8 @@ public struct Pool: Sendable {
             acquiredAt: device.lease?.acquiredAt,
             expiresAt: device.lease?.expiresAt,
             lastActivityAt: device.lastActivityAt,
-            shutdownAt: idle ? device.lastActivityAt.addingTimeInterval(config.idleShutdown) : nil
+            shutdownAt: idle ? device.lastActivityAt.addingTimeInterval(config.idleShutdown) : nil,
+            ownerPid: device.status == .leased ? device.lease?.owner?.pid : nil
         )
     }
 

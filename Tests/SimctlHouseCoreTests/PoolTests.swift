@@ -759,6 +759,69 @@ import Testing
         #expect(record.claim == nil)
     }
 
+    // MARK: - leases bound to a process (simctlhouse run)
+
+    @Test func aLeaseBoundToARunningProcessOutlivesItsExpiry() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec(), owner: 4242))
+        h.clock.advance(minutes: 120)
+        #expect(try h.pool.collectGarbage().reclaimed.isEmpty)
+        let record = try #require(try h.state().devices.first)
+        #expect(record.name == device.name)
+        #expect(record.status == .leased)
+        // Kept ahead, for readers that only know expiresAt.
+        #expect(record.lease?.expiresAt == h.clock.now.addingTimeInterval(30 * 60))
+        #expect(try h.pool.list().first?.ownerPid == 4242)
+    }
+
+    @Test func aLeaseIsReclaimedOnceTheProcessHoldingItExits() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec(), holder: "run", owner: 4242))
+        h.scanner.exit(4242)
+        #expect(try h.pool.collectGarbage().reclaimed == [device.name])
+        // Re-created under a new name, so a command it left running cannot reach the device.
+        let replacement = try #require(try h.state().devices.first)
+        #expect(replacement.name != device.name)
+        #expect(replacement.udid != device.udid)
+        #expect(replacement.status == .available)
+        #expect(h.backend.device(device.udid) == nil)
+        let history = try #require(try h.pool.history(device.name).first)
+        #expect(history.leases.last?.outcome == .abandoned)
+        #expect(history.leases.last?.holder == "run")
+    }
+
+    @Test func aRecycledPidDoesNotKeepABoundLease() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec(), owner: 4242))
+        try StateStore(paths: HousePaths(root: h.root)).transaction { state in
+            state.devices[0].lease?.owner = ProcessRef(pid: 4242, processStartedAt: Date(timeIntervalSince1970: 1_600_000_000))
+        }
+        #expect(try h.pool.collectGarbage().reclaimed == [device.name])
+    }
+
+    @Test func releaseLeaseEndsTheLeaseByItsID() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec(), owner: 4242))
+        let leaseId = try #require(device.leaseId)
+        #expect(try h.pool.heldLeases([leaseId, "other"]) == [leaseId])
+        #expect(try h.pool.releaseLease(leaseId) == device.name)
+        let record = try #require(try h.state().devices.first)
+        #expect(record.status == .available)
+        #expect(record.history.last?.outcome == .released)
+        #expect(try h.pool.heldLeases([leaseId]).isEmpty)
+        // Gone already: nothing to do, and no other lease is touched.
+        let next = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        #expect(try h.pool.releaseLease(leaseId) == nil)
+        #expect(try h.state().devices.first?.lease?.id == next.leaseId)
+    }
+
+    @Test func releaseLeaseLeavesAForcedEraseToFinish() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec(), owner: 4242))
+        h.backend.onErase = { [unowned h] in
+            h.backend.onErase = nil
+            #expect((try? h.pool.releaseLease(device.leaseId!)) == device.name)
+            #expect((try? h.state())?.devices.first?.status == .maintenance)
+        }
+        _ = try h.pool.erase(device.name, force: true)
+        #expect(try h.state().devices.first?.history.last?.outcome == .erased)
+    }
+
     private func addRecord(_ name: String, _ status: PoolDevice.Status, claim: Claim?) throws {
         let now = h.clock.now
         try StateStore(paths: HousePaths(root: h.root)).transaction { state in
