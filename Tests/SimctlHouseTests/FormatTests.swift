@@ -88,6 +88,35 @@ import Testing
         #expect(Format.age(since: now.addingTimeInterval(-30), now: now) == "30s")
     }
 
+    @Test func theUninstallPlanNamesLeasedDevicesAndEverythingElse() {
+        let plan = UninstallPlan(
+            devices: [
+                .init(name: "wild-dragon", holder: "fix login", isLeased: true, bytes: 2_400_000_000),
+                .init(name: "plucky-papaya", holder: nil, isLeased: false, bytes: 17_000_000),
+            ],
+            links: [SkillLink(path: "/Users/x/.claude/skills/simctlhouse", target: nil, status: .linked)],
+            daemonRunning: true, home: URL(fileURLWithPath: "/Users/x/.simctlhouse"), homeExists: true)
+        let text = Format.uninstallPlan(plan)
+        #expect(text.contains("  2 simctlhouse simulators, \(Format.bytes(2_417_000_000))"))
+        #expect(text.contains("    wild-dragon is leased by \"fix login\""))
+        #expect(!text.contains("plucky-papaya is leased"))
+        #expect(text.contains("the background daemon, which is running"))
+        #expect(text.contains("the skill link /Users/x/.claude/skills/simctlhouse"))
+        #expect(text.hasSuffix("Your own simulators and the simctlhouse binary stay."))
+    }
+
+    @Test func anEmptyUninstallPlanSaysSo() {
+        let plan = UninstallPlan(devices: [], links: [], daemonRunning: false, home: URL(fileURLWithPath: "/x"), homeExists: false)
+        #expect(Format.uninstallPlan(plan).contains("nothing; simctlhouse left nothing behind"))
+    }
+
+    @Test func theBinaryHintFollowsHowItWasInstalled() {
+        #expect(
+            Format.removeBinaryHint(executable: URL(fileURLWithPath: "/opt/homebrew/Cellar/simctlhouse/0.2.0/bin/simctlhouse")).hasSuffix(
+                "brew uninstall simctlhouse"))
+        #expect(Format.removeBinaryHint(executable: URL(fileURLWithPath: "/usr/local/bin/simctlhouse")).hasSuffix("rm /usr/local/bin/simctlhouse"))
+    }
+
     @Test func unusedSummaryCountsAndTotals() {
         let device = UnusedDevice(name: "wild-dragon", udid: nil, lastUsedAt: Date(), bytes: 2_400_000_000)
         #expect(Format.unusedSummary([device, device], age: .week, dryRun: false) == "Deleted 2 devices, freed \(Format.bytes(4_800_000_000)).")

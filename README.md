@@ -112,6 +112,7 @@ To test or watch it without leasing a device, `simctlhouse daemon start` keeps i
 | `daemon start \| serve [--keep-alive SECONDS]` | Start the daemon in the background or the foreground, kept running at least 30 minutes by default, for testing |
 | `home [--open]` | Print the state directory (`~/.simctlhouse`), or open it in Finder |
 | `skill install\|uninstall\|status [--skills-dir DIR]...` | Link the agent skill shipped with a release into your coding agents |
+| `uninstall [--yes]` | Remove the pool's simulators, the daemon, the skill links and the state, before removing the binary |
 | `version` | Print the version, like `--version` |
 
 Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--family ipad`, on the newest installed iOS runtime that supports it.
@@ -144,7 +145,7 @@ simctlhouse skill install   # once, to link the agent skill into your coding age
 
 This installs the signed and notarized release binary, and the agent skill next to it in `<prefix>/share/simctlhouse/skills`.
 `simctlhouse skill install` links the skill into every coding agent it finds (Claude Code, Codex and pi); `brew upgrade simctlhouse` then updates the skill too.
-Run `simctlhouse skill uninstall` before `brew uninstall simctlhouse`.
+To remove it, run `simctlhouse uninstall` first: it deletes the pool's simulators, stops the daemon, and removes the skill links and `~/.simctlhouse`, after asking. Then `brew uninstall simctlhouse`.
 
 ### From source
 

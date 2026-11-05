@@ -346,3 +346,12 @@ Without `--holder` or `SIMCTLHOUSE_HOLDER`, `acquire` and `run` label the lease 
 The agent is the first process above the shells and wrappers in between, named by its `argv[0]`, since the kernel's process name of a binary installed under a version number (`~/.local/share/claude/versions/2.1.3`) is that number.
 The directory is the last component of `$PWD` (when it names the working directory) or of the working directory; `history` keeps the full path.
 Trade-off: the default says who and where, not what; the skill still asks for a `--holder`.
+
+## D35. `uninstall` removes everything but the binary, after asking
+
+`brew uninstall` removes only the binary and the shipped skill: the pool's simulators (about 2.4 GB each once booted), the daemon, the skill links and `~/.simctlhouse` stayed behind, and the formula only mentioned the links.
+`simctlhouse uninstall` stops the daemon, deletes every pool device including leased ones, removes the skill links, stops the daemon again in case a command started it meanwhile, and removes the state directory.
+The binary is left to the package manager; the command ends by printing `brew uninstall simctlhouse` or the `rm` for a binary installed otherwise.
+It shows what it will remove and asks, since it ends other agents' leases; without a terminal it refuses unless `--yes` is passed, so an agent cannot run it by accident, and the skill forbids it.
+If a device cannot be deleted, the state and the links stay, so running it again picks up where it stopped instead of leaving simulators nothing tracks.
+Trade-off: lease history and the daemon log go with the state directory.

@@ -20,7 +20,7 @@ It then runs `simctlhouse skill install --source <checkout>/skills/simctlhouse`,
 Because these are links, every project picks up the skill and edits in this repo take effect immediately.
 If something other than a simctlhouse skill link already sits at a link location, nothing is linked and the script stops rather than delete it.
 Re-running it is safe and is how you upgrade after pulling; the next `acquire`, `release` or `renew` replaces a running daemon with the new build.
-`--uninstall` removes the links with `simctlhouse skill uninstall` and stops the daemon before it removes the binary, and leaves the simulator pool alone; run `simctlhouse delete --all --force` first to remove it.
+`--uninstall` removes the links with `simctlhouse skill uninstall` and stops the daemon before it removes the binary, and leaves the simulator pool alone; run `simctlhouse uninstall` first to remove that too.
 
 ### From a release
 
@@ -40,6 +40,18 @@ Running the binary from inside `Cellar/` links a versioned path that the next up
 `skill install` replaces earlier simctlhouse links, including ones `scripts/install.sh` made, and changes nothing if any link location holds something else.
 `--source DIR` links another skill directory instead of the shipped one; `scripts/install.sh` uses it to link the checkout.
 `skill uninstall` also removes links left broken by an uninstalled package.
+
+## Uninstall
+
+```sh
+simctlhouse uninstall          # shows what it removes and asks; --yes skips the question
+brew uninstall simctlhouse     # or `rm` the binary; the command prints which
+```
+
+`simctlhouse uninstall` stops the daemon, deletes every pool device (leased ones included), removes the skill links and the state directory with the lease history and the daemon log.
+Your own simulators stay.
+Without a terminal it refuses unless `--yes` is passed, so an agent or script cannot run it by accident.
+If a device cannot be deleted, it keeps the state and the links and says so; running it again finishes the job.
 
 ## Use it from any agent
 

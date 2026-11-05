@@ -167,8 +167,8 @@ class Simctlhouse < Formula
       To make the simctlhouse skill available to your coding agents, run once:
         simctlhouse skill install
       Upgrades update the skill automatically.
-      Before uninstalling, run:
-        simctlhouse skill uninstall
+      Before uninstalling, remove the pool's simulators, the daemon and the skill links:
+        simctlhouse uninstall
     EOS
   end
 

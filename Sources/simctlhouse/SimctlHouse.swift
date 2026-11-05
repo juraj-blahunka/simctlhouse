@@ -29,7 +29,7 @@ struct SimctlHouse: ParsableCommand {
         version: "0.1.1",
         subcommands: [
             Acquire.self, Release.self, Renew.self, Run.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self,
-            DaemonCommand.self, Home.self, Skill.self, Version.self,
+            DaemonCommand.self, Home.self, Skill.self, UninstallCommand.self, Version.self,
         ]
     )
 
@@ -312,6 +312,47 @@ struct UDID: ParsableCommand {
 
     func run() throws {
         try Runtime.run { pool in print(try pool.udid(of: device)) }
+    }
+}
+
+struct UninstallCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "uninstall",
+        abstract: "Remove simctlhouse's simulators, daemon, skill links and state from this Mac, before removing the binary.",
+        discussion: """
+            Deletes every pool device, leased ones included, stops the daemon, removes the skill links and the state directory
+            (~/.simctlhouse or $SIMCTLHOUSE_HOME, with the lease history and the daemon log). Your own simulators stay.
+            It shows what it will remove and asks first; --yes skips the question, and without a terminal --yes is required.
+            Then remove the binary itself, e.g. with `brew uninstall simctlhouse`.
+            """
+    )
+
+    @Flag(name: .long, help: "Do not ask; required without a terminal.")
+    var yes = false
+
+    @OptionGroup var directories: Skill.DirectoryOptions
+
+    func run() throws {
+        try Runtime.run { pool in
+            let uninstaller = Uninstaller(
+                pool: pool, launcher: DaemonLauncher(paths: HousePaths.fromEnvironment()), skills: SkillInstaller.fromEnvironment(),
+                skillsDirectories: directories.directories)
+            let plan = try uninstaller.plan()
+            Runtime.note(Format.uninstallPlan(plan))
+            if !yes {
+                guard isatty(STDIN_FILENO) == 1 else {
+                    Runtime.note("error: nothing removed. Without a terminal, pass --yes to uninstall.")
+                    throw ExitCode.validationFailure
+                }
+                FileHandle.standardError.write(Data("Remove all of this? [y/N] ".utf8))
+                guard let answer = readLine()?.trimmingCharacters(in: .whitespaces).lowercased(), ["y", "yes"].contains(answer) else {
+                    Runtime.note("Nothing removed.")
+                    throw ExitCode.failure
+                }
+            }
+            try uninstaller.run(log: Runtime.note)
+            Runtime.note(Format.removeBinaryHint(executable: SkillInstaller.currentExecutable().resolvingSymlinksInPath()))
+        }
     }
 }
 
@@ -965,6 +1006,29 @@ enum Format {
 
     static func bytes(_ count: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+
+    static func uninstallPlan(_ plan: UninstallPlan) -> String {
+        var lines = ["This removes from this Mac:"]
+        if !plan.devices.isEmpty {
+            let count = plan.devices.count == 1 ? "1 simctlhouse simulator" : "\(plan.devices.count) simctlhouse simulators"
+            lines.append("  \(count), \(bytes(plan.totalBytes))")
+            for device in plan.devices where device.isLeased {
+                lines.append("    \(device.name) is leased\(device.holder.map { " by \"\($0)\"" } ?? "")")
+            }
+        }
+        if plan.daemonRunning { lines.append("  the background daemon, which is running") }
+        for link in plan.links { lines.append("  the skill link \(path(link.path))") }
+        if plan.homeExists { lines.append("  \(path(plan.home.path)): the pool's state, lease history and daemon log") }
+        if lines.count == 1 { lines.append("  nothing; simctlhouse left nothing behind") }
+        lines.append("Your own simulators and the simctlhouse binary stay.")
+        return lines.joined(separator: "\n")
+    }
+
+    static func removeBinaryHint(executable: URL) -> String {
+        executable.pathComponents.contains("Cellar")
+            ? "Done. Remove the binary with: brew uninstall simctlhouse"
+            : "Done. Remove the binary with: rm \(path(executable.path))"
     }
 
     static func unusedSummary(_ devices: [UnusedDevice], age: Delete.Age, dryRun: Bool) -> String {
