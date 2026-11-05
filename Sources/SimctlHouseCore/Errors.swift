@@ -13,6 +13,8 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
     case deviceLeased(device: String, holder: String?)
     case deviceBusy(device: String, status: PoolDevice.Status)
     case deviceInUse(device: String)
+    /// On disk, but left out of simctl's device list, as while CoreSimulator restarts (D23).
+    case deviceMissing(device: String)
     case takenOver(device: String)
     case invalidEnvironment(variable: String, value: String, expected: String)
     /// `simctlhouse run` was given a command it will not start.
@@ -30,7 +32,7 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
         case .unknownModel, .unsupportedModel, .noRuntime: 2
         case .deviceNotFound: 3
         case .leaseMismatch, .notLeased: 4
-        case .deviceLeased, .deviceBusy, .deviceInUse, .takenOver: 5
+        case .deviceLeased, .deviceBusy, .deviceInUse, .deviceMissing, .takenOver: 5
         case .skillNotShipped, .skillConflict, .notASkill: 6
         case .corruptState, .io: 1
         case .invalidEnvironment, .invalidRunCommand: 64
@@ -67,6 +69,8 @@ public enum SimctlHouseError: Error, Equatable, CustomStringConvertible {
             "\(device) is busy (\(status.rawValue)). Try again shortly."
         case .deviceInUse(let device):
             "\(device) is free, but another process is using it (its UDID appears in a running command). Pick another device."
+        case .deviceMissing(let device):
+            "\(device) is missing from simctl's device list, though still on disk; CoreSimulator may be restarting. Try again shortly."
         case .takenOver(let device):
             "\(device) was taken over while this command worked on it: it ran so long that another simctlhouse process "
                 + "judged it hung and repaired it. Run `simctlhouse list` and try again."

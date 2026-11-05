@@ -551,6 +551,20 @@ import Testing
         #expect(try h.pool.acquire(AcquireRequest()).udid != device.udid)
     }
 
+    @Test func anUnlistedDeviceIsNotLeasedByName() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(device.name)
+        h.backend.setListed(device.udid!, false)
+        h.backend.failBoot = true
+        #expect(throws: SimctlHouseError.deviceMissing(device: device.name)) { try h.pool.acquire(AcquireRequest(device: device.name)) }
+        // A failed boot would otherwise have deleted it.
+        #expect(h.backend.existsOnDisk(udid: device.udid!))
+        #expect(try h.state().devices.first?.status == .available)
+        h.backend.failBoot = false
+        h.backend.setListed(device.udid!, true)
+        #expect(try h.pool.acquire(AcquireRequest(device: device.name)).udid == device.udid)
+    }
+
     @Test func deletingAnUnlistedDeviceStillDeletesItsSimulator() throws {
         let device = try h.pool.acquire(AcquireRequest())
         try h.pool.release(device.name)

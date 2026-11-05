@@ -19,6 +19,7 @@ import Testing
             (.deviceLeased(device: "amber-falcon", holder: "agent-42"), 5),
             (.deviceBusy(device: "amber-falcon", status: .maintenance), 5),
             (.deviceInUse(device: "amber-falcon"), 5),
+            (.deviceMissing(device: "amber-falcon"), 5),
             (.takenOver(device: "amber-falcon"), 5),
             (.skillNotShipped(executable: "/usr/local/bin/simctlhouse"), 6),
             (.skillConflict(paths: ["~/.claude/skills/simctlhouse"]), 6),
@@ -36,7 +37,7 @@ import Testing
     private func listedAbove(_ error: SimctlHouseError) {
         switch error {
         case .simctlFailed, .xcodeRequired, .corruptState, .io, .unknownModel, .unsupportedModel, .noRuntime, .deviceNotFound, .leaseMismatch, .notLeased,
-            .deviceLeased, .deviceBusy, .deviceInUse, .takenOver, .skillNotShipped, .skillConflict, .notASkill, .invalidEnvironment,
+            .deviceLeased, .deviceBusy, .deviceInUse, .deviceMissing, .takenOver, .skillNotShipped, .skillConflict, .notASkill, .invalidEnvironment,
             .invalidRunCommand:
             break
         }

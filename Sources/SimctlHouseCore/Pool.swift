@@ -185,6 +185,8 @@ public struct Pool: Sendable {
                 guard let index = state.index(of: ref) else { throw SimctlHouseError.deviceNotFound(ref) }
                 let device = state.devices[index]
                 try ensureMutable(device, force: false)
+                // Unlisted but on disk (D23): a boot would likely fail and delete it.
+                if let udid = device.udid, live[udid] == nil { throw SimctlHouseError.deviceMissing(device: device.name) }
                 if let udid = device.udid, !scanner.udidsInUse(among: [udid]).isEmpty { throw SimctlHouseError.deviceInUse(device: device.name) }
                 return take(index)
 

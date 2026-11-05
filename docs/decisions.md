@@ -188,7 +188,7 @@ This is the likely cause of the vanished device in D16, which disappeared during
 
 Now a device missing from the listing is retired only if its `device.plist` in `~/Library/Developer/CoreSimulator/Devices/<UDID>/` is gone too; pool devices always live in that default set (D6).
 `simctl delete`, Xcode and simctlhouse itself all remove that directory, while an incomplete listing does not.
-A device that is unlisted but on disk stays in the pool untouched: `acquire` does not hand it out, idle shutdown and lease reclaim wait, and `list` shows it as `Missing`, until a listing includes it again.
+A device that is unlisted but on disk stays in the pool untouched: `acquire` does not hand it out (`acquire <name>` refuses it with exit code 5, since its boot would likely fail and delete it), idle shutdown and lease reclaim wait, and `list` shows it as `Missing`, until a listing includes it again.
 Deleting such a device, as `delete` or a lease reclaim does, still runs `simctl delete` on it, so no simulator is left behind untracked.
 The glitch itself cannot be reproduced on demand without killing CoreSimulatorService, which would shut down every running simulator on the machine, so a `FakeBackend` that leaves devices out of its listing covers it in `PoolTests`.
 Skipping GC whenever `simctl` reports no runtimes was considered as well; the disk check alone covers that case and every other incomplete listing.
