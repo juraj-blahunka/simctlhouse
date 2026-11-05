@@ -185,15 +185,10 @@ enum Subprocess {
         process.standardInput = FileHandle.nullDevice
         try process.run()
         // Drain both pipes concurrently so a chatty stderr cannot deadlock a full stdout pipe.
-        nonisolated(unsafe) var errData = Data()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global().async {
-            errData = err.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        group.wait()
+        let (outData, errData) = try concurrently(
+            { out.fileHandleForReading.readDataToEndOfFile() },
+            { err.fileHandleForReading.readDataToEndOfFile() }
+        )
         process.waitUntilExit()
         return Result(status: process.terminationStatus, stdout: outData, stderr: String(decoding: errData, as: UTF8.self))
     }

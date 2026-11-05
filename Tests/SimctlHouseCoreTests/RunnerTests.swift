@@ -213,7 +213,9 @@ final class FakeSignals: RunSignals, @unchecked Sendable {
     @Test func noticesALeaseLostWhileTheCommandRuns() throws {
         launcher.diesOnSignal()
         launcher.onStart = { [h] _ in
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+            // A thread of its own: with every core busy, the global queues could hold the delete back.
+            Thread.detachNewThread {
+                Thread.sleep(forTimeInterval: 0.2)
                 let name = (try? h.state())?.devices.first?.name ?? ""
                 _ = try? h.pool.delete([name], force: true)
             }

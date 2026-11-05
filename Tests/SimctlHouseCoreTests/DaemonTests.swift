@@ -195,7 +195,11 @@ import Testing
             signal: { pid in
                 #expect(pid == 4242)
                 // Exits a moment later, once its collection is done.
-                DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { held.release() }
+                // A thread of its own: with every core busy, the global queues could hold the release back.
+                Thread.detachNewThread {
+                    Thread.sleep(forTimeInterval: 0.1)
+                    held.release()
+                }
             })
         #expect(try launcher.stop(timeout: 10))
         #expect(try !launcher.status().running)
@@ -538,17 +542,18 @@ func eventually(timeout: Duration = .seconds(10), _ condition: () throws -> Bool
     return try condition()
 }
 
-/// Runs blocking work, such as `Daemon.serve`, on a GCD thread while the test goes on and later awaits its result.
+/// Runs blocking work, such as `Daemon.serve`, on a thread of its own while the test goes on and later awaits its result.
 ///
 /// `Task.detached` would run it on Swift's cooperative pool, which has one thread per core (3 on a CI runner).
 /// The blocked work would then hold a thread that the test needs to resume and unblock it, and the run hangs.
+/// GCD's global queues fail the same way: with every core busy running other tests, they hold the work back.
 final class Background<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var result: Result<T, Error>?
     private var waiter: CheckedContinuation<T, Error>?
 
     init(_ work: @escaping @Sendable () throws -> T) {
-        DispatchQueue.global().async { self.finish(Result { try work() }) }
+        Thread.detachNewThread { self.finish(Result { try work() }) }
     }
 
     var value: T {
