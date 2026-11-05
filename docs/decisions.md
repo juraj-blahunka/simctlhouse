@@ -260,6 +260,9 @@ Replacing the daemon keeps the right build running; keeping an old build from da
 Two builds in use side by side, such as a Homebrew install and a checkout's `scripts/install.sh`, replace each other's daemon whenever the other one runs a command; that costs a restart, never a missed deadline.
 The daemon inherits the environment of the command that started it, including `SIMCTLHOUSE_IDLE_SECONDS`; a command with another value does not restart it.
 `SIMCTLHOUSE_DAEMON=0` keeps commands from starting it, for CI and throwaway homes; `daemon start` starts it explicitly, taking the timeouts from its own environment, which the smoke test uses with a 1s idle time.
+`daemon start` keeps it running for `--keep-alive` seconds (30 minutes by default) even with nothing to watch, so it can be tested and watched without leasing a device first.
+The keep-alive is a flag rather than an environment variable: the variables are pool policy every agent should share, while the keep-alive is a choice for one manual start.
+Nothing can tell a running daemon to stay longer, so a longer keep-alive restarts it the way another build is replaced; daemons that commands start never get one, so a single `release` never leaves a process idling for 30 minutes.
 Trade-off: a background process outlives the command that started it, by up to the idle time (15 minutes) after the last device is released.
 
 ## D30. A corrupt state file is reset

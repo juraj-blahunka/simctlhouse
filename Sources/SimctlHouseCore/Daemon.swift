@@ -25,6 +25,29 @@ public struct DaemonRecord: Codable, Equatable, Sendable {
     public var startedAt: Date
     public var version: String
     public var build: DaemonBuild
+    /// Set by `daemon start --keep-alive`: the daemon runs at least until then, even with nothing to watch.
+    public var keepAliveUntil: Date? = nil
+
+    /// Until when the daemon runs at least.
+    var keptAliveUntil: Date { keepAliveUntil ?? startedAt }
+}
+
+/// How a daemon process is started: the arguments of `simctlhouse daemon serve` besides `--log-file`.
+/// `--keep-alive` is always passed, since `serve` run by hand defaults to 30 minutes and a command's daemon must have none.
+public struct ServeOptions: Equatable, Sendable {
+    /// Wait for the running daemon to exit and take its place.
+    public var takeOver = false
+    /// Keep running at least this long, even with nothing to watch. 0 exits as soon as nothing is left.
+    public var keepAlive: TimeInterval = 0
+
+    public init(takeOver: Bool = false, keepAlive: TimeInterval = 0) {
+        self.takeOver = takeOver
+        self.keepAlive = keepAlive
+    }
+
+    var arguments: [String] {
+        ["daemon", "serve", "--log-file"] + (takeOver ? ["--take-over"] : []) + ["--keep-alive", String(Int(keepAlive))]
+    }
 }
 
 public struct DaemonStatus: Codable, Equatable, Sendable {
@@ -186,10 +209,13 @@ public struct Daemon: Sendable {
     /// Runs until nothing is left to watch or a stop is requested. `onLocked` runs once this process is the daemon,
     /// before any work, so a losing duplicate never touches the log.
     /// With `takeOver`, it waits for a running daemon to exit instead of leaving, as the replacement for another build.
-    public func serve(takeOver: Bool = false, onLocked: () throws -> Void = {}) throws -> Outcome {
+    /// With a `keepAlive`, it runs at least that long from its start, for testing and watching it; work still keeps it longer.
+    public func serve(takeOver: Bool = false, keepAlive: TimeInterval = 0, onLocked: () throws -> Void = {}) throws -> Outcome {
         let paths = pool.store.paths
+        let startedAt = pool.now()
         let record = DaemonRecord(
-            pid: pool.processID, processStartedAt: pool.scanner.startTime(of: pool.processID), startedAt: pool.now(), version: version, build: build)
+            pid: pool.processID, processStartedAt: pool.scanner.startTime(of: pool.processID), startedAt: startedAt, version: version, build: build,
+            keepAliveUntil: keepAlive > 0 ? startedAt.addingTimeInterval(keepAlive) : nil)
         guard let lock = try DaemonLock.acquire(at: paths.daemonLock, record: record) ?? (takeOver ? waitToTakeOver(record) : nil) else {
             return .alreadyRunning(DaemonLock.record(at: paths.daemonLock))
         }
@@ -197,11 +223,12 @@ public struct Daemon: Sendable {
         try onLocked()
         let watcher = try watch(paths.root)
         defer { watcher.cancel() }
-        pool.log("Daemon \(version) started (pid \(record.pid)).")
+        pool.log("Daemon \(version) started (pid \(record.pid))\(record.keepAliveUntil.map { ", kept alive until \(Self.timestamp($0))" } ?? "").")
         // When the last successful collection started, and the last attempt.
         var collectedAt = Date.distantPast
         var lastCollection: Date?
         var nextCollection = pool.now()
+        var waitingOutKeepAlive = false
         while !signals.isStopRequested {
             // A deleted home (a throwaway test home) has nothing left to watch; going on would only recreate it.
             guard FileManager.default.fileExists(atPath: paths.root.path) else { return .idle }
@@ -214,18 +241,26 @@ public struct Daemon: Sendable {
                     collectedAt = started
                 }
                 // Re-read on every wake, also when no collection was due: a command may have moved a deadline.
+                let keepAliveUntil = record.keepAliveUntil.flatMap { pool.now() < $0 ? $0 : nil }
                 let wake = try pool.store.transaction { state -> Date? in
                     let wake = pool.nextWake(in: state, collectedAt: collectedAt)
                     // Released under the state lock: a command that adds work commits after this,
                     // then finds no daemon and starts one, so no work is ever left unwatched.
-                    if wake == nil { lock.release() }
+                    if wake == nil, keepAliveUntil == nil { lock.release() }
                     return wake
                 }
-                guard let wake else {
+                if let wake {
+                    nextCollection = min(nextCollection, wake)
+                    waitingOutKeepAlive = false
+                } else if let keepAliveUntil {
+                    // Nothing can come due, so there is nothing to collect before the keep-alive ends or a command wakes it.
+                    if !waitingOutKeepAlive { pool.log("Nothing to watch; kept alive until \(Self.timestamp(keepAliveUntil)).") }
+                    waitingOutKeepAlive = true
+                    nextCollection = keepAliveUntil
+                } else {
                     pool.log("Nothing left to watch; exiting.")
                     return .idle
                 }
-                nextCollection = min(nextCollection, wake)
                 if let lastCollection { nextCollection = max(nextCollection, lastCollection.addingTimeInterval(Self.minimumInterval)) }
             } catch {
                 pool.log("Collecting garbage failed: \(error). Retrying in \(Int(Self.pollInterval))s.")
@@ -234,6 +269,13 @@ public struct Daemon: Sendable {
         }
         pool.log("Daemon stopped.")
         return .stopped
+    }
+
+    private static func timestamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: date)
     }
 
     /// Waits for the running daemon to exit and takes its lock, holding `daemon.next.lock` meanwhile so that commands
@@ -271,6 +313,8 @@ public struct DaemonLauncher: Sendable {
         case started
         /// A daemon of another build was asked to stop; one of this build takes over once it has exited.
         case replacing
+        /// A daemon of this build kept alive for less long was asked to stop; one with the longer keep-alive takes over.
+        case restarting
     }
 
     public enum StartState: Equatable, Sendable {
@@ -284,20 +328,20 @@ public struct DaemonLauncher: Sendable {
     public let paths: HousePaths
     let build: DaemonBuild
     let scanner: ProcessScanner
-    /// Starts a daemon process and returns its pid; `takeOver` makes it wait for the running daemon to exit.
-    let spawn: @Sendable (_ takeOver: Bool) throws -> Int32
+    /// Starts a daemon process and returns its pid.
+    let spawn: @Sendable (ServeOptions) throws -> Int32
     let signal: @Sendable (Int32) -> Void
 
     public init(paths: HousePaths, build: DaemonBuild = .current(), scanner: ProcessScanner = PSProcessScanner()) {
         self.init(
             paths: paths, build: build, scanner: scanner,
-            spawn: { takeOver in try Self.spawnDetached(build.executable, ["daemon", "serve", "--log-file"] + (takeOver ? ["--take-over"] : [])) },
+            spawn: { options in try Self.spawnDetached(build.executable, options.arguments) },
             signal: { pid in _ = kill(pid, SIGTERM) }
         )
     }
 
     init(
-        paths: HousePaths, build: DaemonBuild, scanner: ProcessScanner, spawn: @escaping @Sendable (_ takeOver: Bool) throws -> Int32,
+        paths: HousePaths, build: DaemonBuild, scanner: ProcessScanner, spawn: @escaping @Sendable (ServeOptions) throws -> Int32,
         signal: @escaping @Sendable (Int32) -> Void
     ) {
         self.paths = paths
@@ -345,14 +389,19 @@ public struct DaemonLauncher: Sendable {
     }
 
     /// `spawned` is the pid of the daemon this call started, if it started one.
-    private func ensure() throws -> (outcome: Outcome, spawned: Int32?) {
-        guard try DaemonLock.isHeld(at: paths.daemonLock) else { return (.started, try spawn(false)) }
+    /// A `keepAlive` that ends later than the running daemon's restarts it, since nothing can tell a running daemon to stay longer.
+    private func ensure(keepAlive: TimeInterval = 0) throws -> (outcome: Outcome, spawned: Int32?) {
+        guard try DaemonLock.isHeld(at: paths.daemonLock) else { return (.started, try spawn(ServeOptions(keepAlive: keepAlive))) }
         // No record yet means a daemon is still starting; it is ours to leave alone.
-        guard let record = DaemonLock.record(at: paths.daemonLock), record.build != build else { return (.running, nil) }
+        guard let record = DaemonLock.record(at: paths.daemonLock) else { return (.running, nil) }
+        let otherBuild = record.build != build
+        let longerKeepAlive = keepAlive > 0 && Date().addingTimeInterval(keepAlive) > record.keptAliveUntil
+        guard otherBuild || longerKeepAlive else { return (.running, nil) }
+        let outcome: Outcome = otherBuild ? .replacing : .restarting
         // A replacement already waits for it; it signalled the old daemon when it was started.
-        if try DaemonLock.isHeld(at: paths.daemonNextLock) { return (.replacing, nil) }
+        if try DaemonLock.isHeld(at: paths.daemonNextLock) { return (outcome, nil) }
         guard signalIfAlive(record) else { return (.running, nil) }
-        return (.replacing, try spawn(true))
+        return (outcome, try spawn(ServeOptions(takeOver: true, keepAlive: keepAlive)))
     }
 
     /// Sends the stop signal, but only while the record's pid still has the recorded start time, so a recycled pid is never signalled.
@@ -369,9 +418,10 @@ public struct DaemonLauncher: Sendable {
     }
 
     /// Starts the daemon like `ensureRunning`, then waits until the daemon it started has taken its lock.
+    /// With a `keepAlive`, the daemon runs at least that long; a running one that would stop sooner is restarted.
     @discardableResult
-    public func start(timeout: TimeInterval = 10) throws -> (outcome: Outcome, state: StartState) {
-        let (outcome, spawned) = try ensure()
+    public func start(keepAlive: TimeInterval = 0, timeout: TimeInterval = 10) throws -> (outcome: Outcome, state: StartState) {
+        let (outcome, spawned) = try ensure(keepAlive: keepAlive)
         guard let spawned else { return (outcome, outcome == .running ? .running : .waiting) }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -381,7 +431,7 @@ public struct DaemonLauncher: Sendable {
             }
             Thread.sleep(forTimeInterval: 0.05)
         }
-        guard outcome == .replacing else { throw SimctlHouseError.io("The daemon did not start within \(Int(timeout))s. See \(paths.daemonLog.path).") }
+        guard outcome != .started else { throw SimctlHouseError.io("The daemon did not start within \(Int(timeout))s. See \(paths.daemonLog.path).") }
         return (outcome, .waiting)
     }
 

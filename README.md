@@ -66,6 +66,7 @@ It sleeps until the next lease expires or a free device's idle time ends, does t
 It talks to no one; like the commands, it only reads and writes the state file.
 It exits on its own once nothing is leased, booted or in progress, and after an upgrade the next command replaces it with the new build.
 `simctlhouse daemon status` shows it.
+To test or watch it without leasing a device, `simctlhouse daemon start` keeps it running for 30 minutes even when the pool is idle (`--keep-alive SECONDS` to change that), and `simctlhouse daemon serve` does the same in the foreground.
 
 ## Commands
 
@@ -82,7 +83,8 @@ It exits on its own once nothing is leased, booted or in progress, and after an 
 | `erase <name\|udid> [--force]` | Erase a device's contents and settings (keeps the name and UDID) |
 | `delete <name\|udid>... \| --all [--force]` | Delete devices |
 | `gc [--json]` | Reclaim expired leases and shut down every free booted device now |
-| `daemon status [--json] \| start \| stop` | Inspect or control the background daemon; commands start it on their own |
+| `daemon status [--json] \| stop` | Inspect or stop the background daemon; commands start it on their own |
+| `daemon start \| serve [--keep-alive SECONDS]` | Start the daemon in the background or the foreground, kept running at least 30 minutes by default, for testing |
 | `skill install\|uninstall\|status [--skills-dir DIR]...` | Link the agent skill shipped with a release into your coding agents |
 
 Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--family ipad`, on the newest installed iOS runtime that supports it.

@@ -24,6 +24,10 @@ step() { printf '==> %s\n' "$*"; }
 fail() { echo "error: $*" >&2; exit 1; }
 udids() { xcrun simctl list devices -j | sed -nE 's/.*"udid" : "([^"]+)".*/\1/p' | sort; }
 daemon_running() { [[ "$("$bin" daemon status --json)" == *'"running" : true'* ]]; }
+daemon_pid() { "$bin" daemon status --json | sed -nE 's/.*"pid" : ([0-9]+).*/\1/p'; }
+kept_alive() { [[ "$("$bin" daemon status --json)" == *'"keepAliveUntil"'* ]]; }
+# Waits up to $1 seconds for the daemon to exit on its own.
+wait_for_daemon_exit() { for _ in $(seq $(($1 * 2))); do daemon_running && sleep 0.5 || return 0; done; ! daemon_running; }
 
 work="$(mktemp -d)"
 export SIMCTLHOUSE_HOME="$work/home"
@@ -66,21 +70,45 @@ step "Checking the daemon acquire started"
 for _ in {1..20}; do daemon_running && break || sleep 0.5; done
 daemon_running || fail "acquire did not start the daemon within 10 seconds."
 [[ "$("$bin" daemon status --json)" == *'"isCurrentBuild" : true'* ]] || fail "the daemon does not run this binary."
+! kept_alive || fail "the daemon acquire started has a keep-alive."
 "$bin" daemon stop
 ! daemon_running || fail "daemon stop left the daemon running."
-"$bin" daemon start
+"$bin" daemon start --keep-alive 0
 daemon_running || fail "daemon start did not start the daemon."
+! kept_alive || fail "daemon start --keep-alive 0 started a daemon with a keep-alive."
+
+step "Restarting the daemon to keep it alive for 5 seconds"
+pid="$(daemon_pid)"
+"$bin" daemon start --keep-alive 5
+daemon_running || fail "daemon start --keep-alive did not leave a daemon running."
+[[ "$(daemon_pid)" != "$pid" ]] || fail "daemon start --keep-alive did not restart the daemon."
+kept_alive || fail "daemon start --keep-alive started a daemon without a keep-alive."
+"$bin" daemon status | /usr/bin/grep -q "^Kept alive until" || fail "daemon status does not show the keep-alive."
 
 step "Releasing it; the daemon shuts it down and stops on its own"
 "$bin" release "$udid"
-for _ in {1..60}; do daemon_running && sleep 0.5 || break; done
-! daemon_running || fail "the daemon did not stop on its own within 30 seconds of the release."
+wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of the release."
 xcrun simctl list devices | /usr/bin/grep -F "$udid" | /usr/bin/grep -qF "(Shutdown)" ||
     fail "the daemon stopped but left released device $udid booted."
 
 step "Deleting it"
 "$bin" delete --all --force
 ! udids | /usr/bin/grep -qxF "$udid" || fail "deleted device $udid still exists."
+
+step "Keeping a daemon alive with nothing to watch"
+"$bin" daemon start --keep-alive 0 2>/dev/null
+! daemon_running || fail "daemon start --keep-alive 0 started a daemon with nothing to watch."
+"$bin" daemon start --keep-alive 3
+daemon_running || fail "daemon start --keep-alive 3 did not start the daemon with nothing to watch."
+wait_for_daemon_exit 15 || fail "the daemon did not stop on its own within 15 seconds after its 3 second keep-alive."
+"$bin" daemon start
+"$bin" daemon status | /usr/bin/grep -q "^Kept alive until" || fail "daemon start does not keep the daemon alive by default."
+"$bin" daemon stop
+"$bin" daemon serve 2>/dev/null &
+for _ in {1..20}; do daemon_running && break || sleep 0.5; done
+kept_alive || fail "daemon serve does not keep the daemon alive by default."
+"$bin" daemon stop
+wait
 
 # Every simulator that existed before must still exist. Other agents on this machine may delete their own devices
 # meanwhile; a failure lists the missing UDIDs so you can tell whether this run touched them.

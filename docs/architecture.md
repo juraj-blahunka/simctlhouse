@@ -168,15 +168,18 @@ Whether a daemon runs is whether that lock is held; the kernel drops it when the
 
 `acquire`, `release` and `renew` call `DaemonLauncher.ensureRunning` after their change has committed, unless `SIMCTLHOUSE_DAEMON=0`:
 
-1. If `daemon.lock` is free, spawn `simctlhouse daemon serve --log-file` with `posix_spawn`: a new session (`POSIX_SPAWN_SETSID`), stdio on `/dev/null`, and no other descriptor inherited (`POSIX_SPAWN_CLOEXEC_DEFAULT`), so `UDID=$(simctlhouse acquire)` never waits for it.
+1. If `daemon.lock` is free, spawn `simctlhouse daemon serve --log-file --keep-alive 0` with `posix_spawn`: a new session (`POSIX_SPAWN_SETSID`), stdio on `/dev/null`, and no other descriptor inherited (`POSIX_SPAWN_CLOEXEC_DEFAULT`), so `UDID=$(simctlhouse acquire)` never waits for it.
    Two commands racing both spawn; the second daemon finds the lock held and exits.
 2. If it is held by another build (another resolved path, inode or modification time of the binary), send that daemon `SIGTERM` and spawn this build with `--take-over`, then return without waiting.
    The old daemon finishes its current collection and exits; the new one waits up to 10 minutes for the lock, holding `daemon.next.lock` meanwhile so that further commands start no second replacement.
    The old daemon is signalled only while its pid still has the recorded start time.
    Until it has exited, the state's `version` keeps it from damaging what the new build wrote (D31).
 
-`daemon start` first collects garbage and asks `Pool.hasWorkForDaemon` whether anything is left to watch, as the daemon would on its first wake; if nothing is, it starts none, since that daemon would exit at once.
-Otherwise it does the same, and then waits until the daemon it started has taken the lock.
+`daemon start` passes its `--keep-alive` (30 minutes by default, as for `daemon serve` run by hand) to `daemon serve`, which records the end as `keepAliveUntil` in `daemon.lock`.
+While that time has not passed, a daemon with nothing to watch keeps the lock and sleeps until it ends or a command changes the state, instead of exiting.
+If a daemon of this build runs whose keep-alive ends sooner, `daemon start` signals it and spawns a replacement with `--take-over`, as for another build.
+With `--keep-alive 0` it first collects garbage and asks `Pool.hasWorkForDaemon` whether anything is left to watch, as the daemon would on its first wake; if nothing is, it starts none, since that daemon would exit at once.
+Either way it then waits until the daemon it started has taken the lock.
 The daemon takes its timeouts from the environment of the command that started it.
 
 ### Stopping

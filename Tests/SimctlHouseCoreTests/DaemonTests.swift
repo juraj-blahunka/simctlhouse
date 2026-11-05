@@ -96,6 +96,43 @@ import Testing
         #expect(h.clock.now.timeIntervalSince(released) < 15 * 60 + Daemon.pollInterval)
     }
 
+    @Test func aKeepAliveKeepsAnIdleDaemonRunning() throws {
+        let started = h.clock.now
+        let daemon = daemon()
+        let served = try daemon.serve(keepAlive: 30 * 60) {
+            #expect(DaemonLock.record(at: h.root.appending(path: "daemon.lock"))?.keepAliveUntil == started.addingTimeInterval(30 * 60))
+        }
+        #expect(served == .idle)
+        #expect(h.clock.now == started.addingTimeInterval(30 * 60))
+        #expect(try !DaemonLock.isHeld(at: h.root.appending(path: "daemon.lock")))
+    }
+
+    @Test func aDaemonKeptAliveStillDoesItsWorkOnTime() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        try h.pool.release(device.name)
+        let started = h.clock.now
+        let shutDown = Moment()
+        let daemon = Daemon(
+            pool: h.pool, version: "test", build: build, signals: DaemonSignals(),
+            sleep: { [unowned h] seconds in
+                // Checked before sleeping on, so it is the time of the collection that shut the device down.
+                if h.backend.device(device.udid)?.state == "Shutdown" { shutDown.setOnce(h.clock.now) }
+                h.clock.advance(minutes: seconds / 60)
+            })
+        #expect(try daemon.serve(keepAlive: 20 * 60) == .idle)
+        // The idle shutdown happens on time, and the daemon then stays until its keep-alive ends.
+        let shutDownAfter = try #require(shutDown.value).timeIntervalSince(started)
+        #expect(shutDownAfter >= 15 * 60 && shutDownAfter < 15 * 60 + Daemon.pollInterval)
+        #expect(h.clock.now == started.addingTimeInterval(20 * 60))
+    }
+
+    @Test func workOutlastingTheKeepAliveKeepsTheDaemonLonger() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        #expect(try daemon().serve(keepAlive: 5 * 60) == .idle)
+        #expect(try h.state().retired.last?.name == device.name)
+        #expect(h.clock.now >= device.expiresAt!)
+    }
+
     @Test func onlyOneDaemonRuns() throws {
         _ = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         let record = DaemonRecord(pid: 4242, processStartedAt: nil, startedAt: h.clock.now, version: "other", build: build)
@@ -222,6 +259,41 @@ import Testing
         #expect(try exited.start(timeout: 1) == (.started, .exited))
     }
 
+    @Test func startPassesTheKeepAliveToTheDaemon() throws {
+        let launched = Launches()
+        #expect(try launcher(launched).start(keepAlive: 1800, timeout: 1) == (.started, .exited))
+        #expect(launched.all == [ServeOptions(keepAlive: 1800)])
+        #expect(ServeOptions(keepAlive: 1800).arguments == ["daemon", "serve", "--log-file", "--keep-alive", "1800"])
+        // Always explicit: `serve` run by hand keeps running for 30 minutes, which a command's daemon must not.
+        #expect(ServeOptions().arguments == ["daemon", "serve", "--log-file", "--keep-alive", "0"])
+        #expect(ServeOptions(takeOver: true).arguments == ["daemon", "serve", "--log-file", "--take-over", "--keep-alive", "0"])
+    }
+
+    @Test func aLongerKeepAliveRestartsADaemonOfThisBuild() throws {
+        // Started by a command, so without a keep-alive.
+        let held = try holdLock(build: build)
+        let launched = Launches()
+        let signalled = Counter()
+        #expect(try launcher(launched, signalled).ensureRunning() == .running)
+        #expect(launched.all.isEmpty)
+        // The fake replacement never takes the lock, as if the old daemon were still finishing its collection.
+        #expect(try launcher(launched, signalled).start(keepAlive: 1800, timeout: 0.1) == (.restarting, .waiting))
+        #expect(signalled.value == 1)
+        #expect(launched.all == [ServeOptions(takeOver: true, keepAlive: 1800)])
+        held.release()
+    }
+
+    @Test func aShorterKeepAliveLeavesTheDaemonAlone() throws {
+        let held = try holdLock(build: build, keepAliveUntil: Date().addingTimeInterval(3600))
+        #expect(try launcher(Launches()).start(keepAlive: 3500, timeout: 0.1) == (.running, .running))
+        let launched = Launches()
+        let signalled = Counter()
+        #expect(try launcher(launched, signalled).start(keepAlive: 1800, timeout: 0.1) == (.running, .running))
+        #expect(signalled.value == 0)
+        #expect(launched.all.isEmpty)
+        held.release()
+    }
+
     @Test func leavesADaemonOfThisBuildAlone() throws {
         let held = try holdLock(build: build)
         let spawned = Counter()
@@ -238,8 +310,8 @@ import Testing
         let signalled = Counter()
         let launcher = DaemonLauncher(
             paths: HousePaths(root: h.root), build: build, scanner: h.scanner,
-            spawn: { takeOver in
-                takeOvers.append("\(takeOver)")
+            spawn: { options in
+                takeOvers.append("\(options.takeOver)")
                 return 4343
             },
             signal: { _ in signalled.increment() })
@@ -328,11 +400,46 @@ import Testing
             }, signal: { _ in signalled.increment() })
     }
 
+    /// Records each daemon it starts. Each one takes the lock and exits at once, as with nothing to watch,
+    /// or finds it held, as while the daemon it replaces still runs.
+    private func launcher(_ launched: Launches, _ signalled: Counter = Counter()) -> DaemonLauncher {
+        let lockPath = h.root.appending(path: "daemon.lock")
+        let record = DaemonRecord(pid: 4343, processStartedAt: nil, startedAt: Date(), version: "test", build: build)
+        return DaemonLauncher(
+            paths: HousePaths(root: h.root), build: build, scanner: h.scanner,
+            spawn: { options in
+                launched.append(options)
+                try DaemonLock.acquire(at: lockPath, record: record)?.release()
+                return 4343
+            }, signal: { _ in signalled.increment() })
+    }
+
     /// Holds the daemon lock the way another daemon process would.
-    private func holdLock(build: DaemonBuild, processStartedAt: Date? = Date(timeIntervalSince1970: 1_700_000_000)) throws -> DaemonLock {
-        let record = DaemonRecord(pid: 4242, processStartedAt: processStartedAt, startedAt: h.clock.now, version: "test", build: build)
+    /// Started now on the wall clock, which the launcher compares keep-alives against.
+    private func holdLock(
+        build: DaemonBuild, processStartedAt: Date? = Date(timeIntervalSince1970: 1_700_000_000), keepAliveUntil: Date? = nil
+    ) throws -> DaemonLock {
+        let record = DaemonRecord(
+            pid: 4242, processStartedAt: processStartedAt, startedAt: Date(), version: "test", build: build, keepAliveUntil: keepAliveUntil)
         return try #require(try DaemonLock.acquire(at: h.root.appending(path: "daemon.lock"), record: record))
     }
+}
+
+/// The first moment set, from any thread.
+final class Moment: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date: Date?
+
+    var value: Date? { lock.withLock { date } }
+    func setOnce(_ moment: Date) { lock.withLock { date = date ?? moment } }
+}
+
+final class Launches: @unchecked Sendable {
+    private let lock = NSLock()
+    private var options: [ServeOptions] = []
+
+    var all: [ServeOptions] { lock.withLock { options } }
+    func append(_ launch: ServeOptions) { lock.withLock { options.append(launch) } }
 }
 
 final class Counter: @unchecked Sendable {

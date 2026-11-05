@@ -385,36 +385,63 @@ struct DaemonCommand: ParsableCommand {
             abstract: "Start the daemon in the background unless it runs, and wait until it does.",
             discussion: """
                 It takes its timeouts from this command's environment, e.g. SIMCTLHOUSE_IDLE_SECONDS=1 simctlhouse daemon start.
-                When nothing is leased, booted or in progress, it starts nothing: the daemon would exit right away.
+                It keeps running for --keep-alive seconds even with nothing to watch, and after that until nothing is leased, booted or in progress.
+                A running daemon that would stop sooner is restarted with the longer keep-alive.
+                Daemons that commands start have no keep-alive; when a command replaces this one after an upgrade, the keep-alive ends.
+                With --keep-alive 0 and nothing to watch, it starts nothing: the daemon would exit right away.
                 """
         )
 
+        @Option(name: .long, help: ArgumentHelp("Seconds to keep running, even with nothing to watch.", valueName: "seconds"))
+        var keepAlive: Int = 30 * 60
+
+        func validate() throws {
+            guard keepAlive >= 0 else { throw ValidationError("--keep-alive must be 0 or more seconds.") }
+        }
+
         func run() throws {
             try Runtime.run { pool in
-                guard try pool.hasWorkForDaemon() else {
+                if keepAlive == 0, try !pool.hasWorkForDaemon() {
                     Runtime.note("Not started: nothing is leased, booted or in progress. The next acquire, release or renew starts it.")
                     return
                 }
-                let (outcome, state) = try DaemonLauncher(paths: HousePaths.fromEnvironment()).start()
+                let launcher = DaemonLauncher(paths: HousePaths.fromEnvironment())
+                let (outcome, state) = try launcher.start(keepAlive: TimeInterval(keepAlive))
+                let until = (try? launcher.status())?.daemon?.keepAliveUntil.map { " It keeps running until \(Format.timestamp($0))." } ?? ""
                 switch (outcome, state) {
-                case (.running, _): Runtime.note("Already running.")
+                case (.running, _): Runtime.note("Already running.\(until)")
                 case (_, .exited): Runtime.note("Started, but nothing is leased, booted or in progress, so it exited again.")
+                case (.restarting, .waiting): Runtime.note("Asked the running daemon to stop; one kept alive longer takes over once it has.")
                 case (_, .waiting): Runtime.note("Asked the daemon of another build to stop; this build takes over once it has.")
-                case (.started, .running): Runtime.note("Started.")
-                case (.replacing, .running): Runtime.note("Replaced the daemon of another build.")
+                case (.started, .running): Runtime.note("Started.\(until)")
+                case (.replacing, .running): Runtime.note("Replaced the daemon of another build.\(until)")
+                case (.restarting, .running): Runtime.note("Restarted it to keep it running longer.\(until)")
                 }
             }
         }
     }
 
     struct Serve: ParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Run the daemon in the foreground until the pool is idle. Commands start it on their own.")
+        static let configuration = CommandConfiguration(
+            abstract: "Run the daemon in the foreground. Commands start it on their own.",
+            discussion: """
+                It keeps running for --keep-alive seconds even with nothing to watch, and after that until nothing is leased, booted or in progress.
+                Commands start it with --keep-alive 0, so it exits as soon as the pool is idle.
+                """
+        )
 
         @Flag(name: .long, help: "Log to <home>/daemon.log instead of stderr, as commands start it.")
         var logFile = false
 
         @Flag(name: .long, help: "Wait for a running daemon to exit and take over, as commands start the replacement for another build.")
         var takeOver = false
+
+        @Option(name: .long, help: ArgumentHelp("Seconds to keep running, even with nothing to watch.", valueName: "seconds"))
+        var keepAlive: Int = 30 * 60
+
+        func validate() throws {
+            guard keepAlive >= 0 else { throw ValidationError("--keep-alive must be 0 or more seconds.") }
+        }
 
         func run() throws {
             try Runtime.run {
@@ -432,7 +459,7 @@ struct DaemonCommand: ParsableCommand {
                 chdir("/")
                 let pool = try Runtime.pool { message in Runtime.note("\(Format.timestamp(Date()))  \(message)") }
                 let daemon = Daemon(pool: pool, version: Runtime.version, signals: signals)
-                let outcome = try daemon.serve(takeOver: takeOver) {
+                let outcome = try daemon.serve(takeOver: takeOver, keepAlive: TimeInterval(keepAlive)) {
                     if logFile { try DaemonLauncher.redirectOutput(to: pool.store.paths) }
                 }
                 if case .alreadyRunning(let record) = outcome {
@@ -467,6 +494,9 @@ struct DaemonCommand: ParsableCommand {
                     return
                 }
                 print("Running since \(Format.timestamp(daemon.startedAt)), pid \(daemon.pid), version \(daemon.version)")
+                if let until = daemon.keepAliveUntil, until > Date() {
+                    print("Kept alive until \(Format.timestamp(until)), then until nothing is leased, booted or in progress")
+                }
                 print(
                     "Binary: \(Format.path(daemon.build.executable))\(status.isCurrentBuild == false ? " (another build; the next command replaces it)" : "")")
                 print("Log: \(Format.path(HousePaths.fromEnvironment().daemonLog.path))")

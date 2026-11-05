@@ -125,9 +125,15 @@ To look at it or control it:
 ```sh
 simctlhouse daemon status     # running or not, since when, pid, version, binary
 simctlhouse daemon stop       # stops it until the next acquire, release or renew
-simctlhouse daemon start      # starts it now, if anything is leased, booted or in progress; with this command's timeouts
+simctlhouse daemon start      # starts it now and keeps it running at least 30 minutes; with this command's timeouts
 tail ~/.simctlhouse/daemon.log
 ```
+
+`daemon start --keep-alive SECONDS` sets how long it keeps running even with nothing to watch (default 1800); after that it exits once the pool is idle, as usual.
+A daemon already running that would stop sooner is restarted with the longer keep-alive.
+`--keep-alive 0` starts it only if anything is leased, booted or in progress, since it would exit right away otherwise.
+`daemon serve` runs it in the foreground with the same flag and default.
+This is for testing and watching the daemon: those that commands start have no keep-alive, and a command that replaces the daemon after an upgrade ends it.
 
 `SIMCTLHOUSE_DAEMON=0` keeps commands from starting it, for CI or a throwaway home; the commands then do the cleanup when they run, as before.
 The architecture doc describes how it works.

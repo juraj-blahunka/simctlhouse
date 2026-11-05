@@ -590,7 +590,7 @@ public struct Pool: Sendable {
     }
 
     /// Whether a daemon would have anything to watch, decided as the daemon does on its first wake:
-    /// collect garbage, then look for a deadline. `daemon start` asks first, so it never starts a daemon that would exit at once.
+    /// collect garbage, then look for a deadline. `daemon start --keep-alive 0` asks first, so it never starts a daemon that would exit at once.
     public func hasWorkForDaemon() throws -> Bool {
         let started = now()
         try collectGarbage()

@@ -98,7 +98,9 @@ import Testing
                 }
                 """)
         let build = DaemonBuild(executable: "/opt/homebrew/Cellar/simctlhouse/0.2.0/bin/simctlhouse", inode: 7, modifiedAt: 1_793_037_000)
-        let record = DaemonRecord(pid: 4242, processStartedAt: Self.acquiredAt, startedAt: Self.acquiredAt, version: "0.2.0", build: build)
+        let record = DaemonRecord(
+            pid: 4242, processStartedAt: Self.acquiredAt, startedAt: Self.acquiredAt, version: "0.2.0", build: build,
+            keepAliveUntil: Self.acquiredAt.addingTimeInterval(30 * 60))
         #expect(
             try Runtime.json(DaemonStatus(running: true, daemon: record, isCurrentBuild: true)) == """
                 {
@@ -108,6 +110,7 @@ import Testing
                       "inode" : 7,
                       "modifiedAt" : 1793037000
                     },
+                    "keepAliveUntil" : "2026-10-26T18:30:00Z",
                     "pid" : 4242,
                     "processStartedAt" : "2026-10-26T18:00:00Z",
                     "startedAt" : "2026-10-26T18:00:00Z",
