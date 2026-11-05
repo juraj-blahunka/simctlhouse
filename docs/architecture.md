@@ -134,7 +134,7 @@ Transactions never nest, which would deadlock on that same property.
 
 GC runs at the start of every command, and in the daemon whenever something comes due:
 
-1. Retires records whose simulator was deleted outside simctlhouse.
+1. Retires records whose simulator was deleted outside simctlhouse: missing from the listing and from disk (D23).
 2. Repairs abandoned `provisioning` and `maintenance` records (see Concurrency).
 3. Reclaims expired leases: retires the old name with its history, renames the record and moves it to `provisioning` with the old UDID set aside in `replacedUDID`, deletes and re-creates the simulator, and returns it `available` and shut down.
    Neither the old name nor the old UDID reaches the record from the moment of expiry, and the old simulator is never handed out, even if deleting it fails.

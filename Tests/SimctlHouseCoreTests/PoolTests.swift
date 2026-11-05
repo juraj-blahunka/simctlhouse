@@ -447,6 +447,62 @@ import Testing
         #expect(try h.pool.history().map(\.name) == [device.name, renamed.name])
     }
 
+    @Test func aDeviceLeftOutOfOneListingIsKept() throws {
+        let leased = try h.pool.acquire(AcquireRequest(holder: "agent-1"))
+        let free = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(free.name)
+        // CoreSimulator answers without them once, as while its service restarts; both are still on disk.
+        h.backend.setListed(leased.udid!, false)
+        h.backend.setListed(free.udid!, false)
+        let report = try h.pool.collectGarbage()
+        #expect(report.forgotten.isEmpty)
+        #expect(try h.state().retired.isEmpty)
+        h.backend.setListed(leased.udid!, true)
+        h.backend.setListed(free.udid!, true)
+        // The next listing has them again, and the lease goes on as before.
+        let renewed = try h.pool.renew(leased.name)
+        #expect(renewed.udid == leased.udid)
+        #expect(renewed.holder == "agent-1")
+        #expect(try h.pool.acquire(AcquireRequest()).udid == free.udid)
+    }
+
+    @Test func aDeviceMissingFromListingAndDiskStillVanishes() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        h.backend.removeBehindOurBack(device.udid!)
+        #expect(try h.pool.collectGarbage().forgotten == [device.name])
+        #expect(try h.state().retired.last?.reason == .vanished)
+    }
+
+    @Test func anUnlistedDeviceIsNotIdleShutDownOrHandedOut() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(device.name)
+        h.backend.setListed(device.udid!, false)
+        h.clock.advance(minutes: 20)
+        #expect(try h.pool.collectGarbage().shutDown.isEmpty)
+        // acquire creates another device instead of handing out one it cannot see.
+        #expect(try h.pool.acquire(AcquireRequest()).udid != device.udid)
+    }
+
+    @Test func deletingAnUnlistedDeviceStillDeletesItsSimulator() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(device.name)
+        h.backend.setListed(device.udid!, false)
+        #expect(try h.pool.delete([device.name], force: false) == [device.name])
+        #expect(!h.backend.existsOnDisk(udid: device.udid!))
+        #expect(try h.state().retired.last?.reason == .deleted)
+    }
+
+    @Test func anExpiredLeaseLeftOutOfTheListingIsReclaimedOnceListed() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        h.backend.setListed(device.udid!, false)
+        h.clock.advance(minutes: 31)
+        #expect(try h.pool.collectGarbage().reclaimed.isEmpty)
+        h.backend.setListed(device.udid!, true)
+        #expect(try h.pool.collectGarbage().reclaimed.count == 1)
+        // The old simulator is deleted, not left behind.
+        #expect(!h.backend.existsOnDisk(udid: device.udid!))
+    }
+
     @Test func vanishedAndDeletedDevicesStayInHistory() throws {
         let vanished = try h.pool.acquire(AcquireRequest(holder: "victim"))
         let deleted = try h.pool.acquire(AcquireRequest(holder: "owner"))

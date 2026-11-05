@@ -132,7 +132,7 @@ Outcomes are `released`, `expired`, `erased`, `deleted`, `vanished`, `failed` (c
 A device that leaves the pool keeps its record in `retired` (the 50 most recent), so `history` still answers for a deleted, vanished or expired-and-renamed device.
 New names never reuse a retired name, so `history <name>` stays unambiguous.
 This exists because a leased device once vanished mid-test, and the only way to find out who held it was digging through agent transcripts.
-The underlying cause is not fixed (D23).
+The likely cause, a single incomplete device listing, is fixed since D23.
 Trade-off: `state.json` grows to a bounded few hundred records.
 
 ## D17. Every command accepts a name or a UDID
@@ -179,12 +179,19 @@ The skill tells agents to renew relative to the printed expiry instead of a fixe
 Each failure class has its own exit code (1 simctl or I/O, 2 model or runtime, 3 not found, 4 lease mismatch, 5 leased or busy, 6 skill install, 64 usage), documented in the how-to and the skill.
 Agents branch on them instead of parsing messages, so codes are never renumbered or reused; new failure classes get new codes.
 
-## D23. Known risk: GC trusts a single device listing
+## D23. A device is gone only when it is gone from disk too
 
-GC retires a device as `vanished` the first time one `simctl list devices` call does not include it.
-If CoreSimulator briefly returns an incomplete list, for example while its service restarts, a live device would be dropped from the registry and never managed again.
+GC used to retire a device as `vanished` the first time one `simctl list devices` call did not include it.
+CoreSimulator can briefly return an incomplete list, for example while its service restarts, and a live device was then dropped from the registry and never managed again.
 This is the likely cause of the vanished device in D16, which disappeared during a window where every `simctl` call reported no runtimes.
-Not fixed yet: a fix (skip the run when `simctl` reports no runtimes, and require the device directory to be gone too) should first be reproduced end to end.
+
+Now a device missing from the listing is retired only if its `device.plist` in `~/Library/Developer/CoreSimulator/Devices/<UDID>/` is gone too; pool devices always live in that default set (D6).
+`simctl delete`, Xcode and simctlhouse itself all remove that directory, while an incomplete listing does not.
+A device that is unlisted but on disk stays in the pool untouched: `acquire` does not hand it out, idle shutdown and lease reclaim wait, and `list` shows it as `Missing`, until a listing includes it again.
+Deleting such a device, as `delete` or a lease reclaim does, still runs `simctl delete` on it, so no simulator is left behind untracked.
+The glitch itself cannot be reproduced on demand without killing CoreSimulatorService, which would shut down every running simulator on the machine, so a `FakeBackend` that leaves devices out of its listing covers it in `PoolTests`.
+Skipping GC whenever `simctl` reports no runtimes was considered as well; the disk check alone covers that case and every other incomplete listing.
+Trade-off: a simulator that CoreSimulator never lists again while its directory remains stays in the pool as `Missing` until someone deletes it.
 
 ## D24. Agent agnostic
 

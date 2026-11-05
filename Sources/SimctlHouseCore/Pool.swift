@@ -496,7 +496,10 @@ public struct Pool: Sendable {
                     // to delete, and any half-made simulator carrying our name. The record stays until they are gone,
                     // so a failed delete is retried rather than leaving a simulator nothing tracks.
                     report.forgotten.append(device.name)
-                    let leftovers = live.values.filter { $0.udid == device.replacedUDID || $0.name == device.name }.map(\.udid)
+                    var leftovers = live.values.filter { $0.udid == device.replacedUDID || $0.name == device.name }.map(\.udid)
+                    if let replaced = device.replacedUDID, !leftovers.contains(replaced), backend.existsOnDisk(udid: replaced) {
+                        leftovers.append(replaced)
+                    }
                     guard leftovers.isEmpty else {
                         let claim = newClaim()
                         device.begin(.provisioning, claim: claim, at: now)
@@ -508,7 +511,7 @@ public struct Pool: Sendable {
                     continue
                 case .maintenance:
                     guard isAbandoned(device, now: now) else { break }
-                    if let udid = device.udid, live[udid] != nil {
+                    if let udid = device.udid, !isGone(udid, live: live) {
                         device.restore(at: now)
                         report.recovered.append(device.name)
                     } else {
@@ -517,10 +520,16 @@ public struct Pool: Sendable {
                         continue
                     }
                 case .available, .leased:
-                    guard let udid = device.udid, live[udid] != nil else {
+                    guard let udid = device.udid, !isGone(udid, live: live) else {
                         // Deleted behind our back (Xcode, `simctl delete`, ...). Nothing left to manage.
                         state.retire(device, reason: .vanished, at: now)
                         report.forgotten.append(device.name)
+                        continue
+                    }
+                    guard live[udid] != nil else {
+                        // Left out of an incomplete listing; act on it once simctl lists it again.
+                        log("\(device.name) is missing from simctl's device list but still on disk; keeping it.")
+                        keep.append(device)
                         continue
                     }
                 }
@@ -731,9 +740,16 @@ public struct Pool: Sendable {
         _ = try finish(claim) { state, index in state.retire(at: index, reason: reason, at: now()) }
     }
 
+    /// Also deletes a simulator that an incomplete listing left out, so that none is left behind untracked.
     private func deleteIfPresent(udid: String) throws {
-        guard try liveDevices()[udid] != nil else { return }
+        guard try liveDevices()[udid] != nil || backend.existsOnDisk(udid: udid) else { return }
         try backend.delete(udid: udid)
+    }
+
+    /// Whether a simulator is really gone: missing from the listing and from disk.
+    /// A single `simctl list` can leave out devices that exist, so the listing alone never retires a device (D23).
+    private func isGone(_ udid: String, live: [String: SimDevice]) -> Bool {
+        live[udid] == nil && !backend.existsOnDisk(udid: udid)
     }
 
     private func liveDevices() throws -> [String: SimDevice] {

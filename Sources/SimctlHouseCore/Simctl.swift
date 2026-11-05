@@ -66,18 +66,27 @@ public protocol SimulatorBackend: Sendable {
     func delete(udid: String) throws
     /// Wipes contents and settings of a shut down device, keeping its UDID.
     func erase(udid: String) throws
+    /// Whether the simulator still exists on disk. `devices()` can briefly leave out devices that exist,
+    /// for example while CoreSimulator restarts, so a device is only taken for gone when this says so too (D23).
+    func existsOnDisk(udid: String) -> Bool
 }
 
 public struct Simctl: SimulatorBackend {
     /// Runs `xcrun simctl` with the given arguments. Tests pass recorded output instead.
     let execute: @Sendable ([String]) throws -> Subprocess.Result
+    /// The default device set, where every pool device lives (D6): one directory per UDID.
+    let devicesDirectory: URL
 
     public init() {
         self.init(execute: { arguments in try Subprocess.run("/usr/bin/xcrun", ["simctl"] + arguments) })
     }
 
-    init(execute: @escaping @Sendable ([String]) throws -> Subprocess.Result) {
+    init(
+        execute: @escaping @Sendable ([String]) throws -> Subprocess.Result,
+        devicesDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Developer/CoreSimulator/Devices")
+    ) {
         self.execute = execute
+        self.devicesDirectory = devicesDirectory
     }
 
     public func devices() throws -> [SimDevice] {
@@ -120,6 +129,11 @@ public struct Simctl: SimulatorBackend {
 
     public func delete(udid: String) throws {
         _ = try run(["delete", udid])
+    }
+
+    /// CoreSimulator keeps each device's configuration in `<UDID>/device.plist`; deleting the device removes the directory.
+    public func existsOnDisk(udid: String) -> Bool {
+        FileManager.default.fileExists(atPath: devicesDirectory.appending(path: udid).appending(path: "device.plist").path)
     }
 
     private func runForUDID(_ arguments: [String]) throws -> String {

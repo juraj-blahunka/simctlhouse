@@ -91,6 +91,19 @@ import Testing
         #expect(SimctlHouseError.xcodeRequired(stderr: stderr).description.contains("xcode-select -s /Applications/Xcode.app"))
     }
 
+    @Test func aDeviceExistsOnDiskWhileItsPlistDoes() throws {
+        let set = FileManager.default.temporaryDirectory.appending(path: "simctlhouse-set-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: set) }
+        let simctl = Simctl(execute: { _ in Subprocess.Result(status: 0, stdout: Data(), stderr: "") }, devicesDirectory: set)
+        let udid = "E1B5E4F7-1356-4DBA-9D3C-CC2F5807D95B"
+        #expect(!simctl.existsOnDisk(udid: udid))
+        // A directory without a device.plist is no device.
+        try FileManager.default.createDirectory(at: set.appending(path: udid), withIntermediateDirectories: true)
+        #expect(!simctl.existsOnDisk(udid: udid))
+        try Data().write(to: set.appending(path: udid).appending(path: "device.plist"))
+        #expect(simctl.existsOnDisk(udid: udid))
+    }
+
     // MARK: - recorded output
 
     static let alreadyShutDown = """

@@ -13,6 +13,8 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
 
     private let lock = NSLock()
     private var storage: [String: Device] = [:]
+    /// On disk but left out of `devices()`, as by an incomplete listing.
+    private var unlisted: Set<String> = []
     private(set) var calls: [String] = []
     var failBoot = false
     var failErase = false
@@ -52,6 +54,7 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     func devices() throws -> [SimDevice] {
         lock.withLock {
             storage.values
+                .filter { !unlisted.contains($0.udid) }
                 .map { SimDevice(udid: $0.udid, name: $0.name, state: $0.state, deviceTypeIdentifier: $0.deviceType) }
         }
     }
@@ -94,6 +97,8 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
         }
     }
 
+    func existsOnDisk(udid: String) -> Bool { lock.withLock { storage[udid] != nil } }
+
     func delete(udid: String) throws {
         try lock.withLock {
             calls.append("delete \(storage[udid]?.name ?? udid)")
@@ -118,6 +123,13 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     }
 
     func removeBehindOurBack(_ udid: String) { _ = lock.withLock { storage.removeValue(forKey: udid) } }
+
+    /// Leaves the device out of `devices()` while it stays on disk, as CoreSimulator can while it restarts.
+    func setListed(_ udid: String, _ listed: Bool) {
+        lock.withLock {
+            if listed { unlisted.remove(udid) } else { unlisted.insert(udid) }
+        }
+    }
 
     func setState(_ udid: String, _ state: String) { lock.withLock { storage[udid]?.state = state } }
 
