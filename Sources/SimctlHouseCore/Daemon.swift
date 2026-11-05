@@ -230,43 +230,49 @@ public struct Daemon: Sendable {
         var nextCollection = pool.now()
         var waitingOutKeepAlive = false
         while !signals.isStopRequested {
-            // A deleted home (a throwaway test home) has nothing left to watch; going on would only recreate it.
-            guard FileManager.default.fileExists(atPath: paths.root.path) else { return .idle }
-            do {
-                if pool.now() >= nextCollection {
-                    let started = pool.now()
-                    lastCollection = started
-                    nextCollection = started.addingTimeInterval(Self.pollInterval)
-                    try pool.collectGarbage()
-                    collectedAt = started
+            // A pool per wake: this loop never returns to a run loop, so the objects Foundation autoreleases
+            // while running simctl and reading the state would otherwise pile up for as long as the daemon lives.
+            let outcome = autoreleasepool { () -> Outcome? in
+                // A deleted home (a throwaway test home) has nothing left to watch; going on would only recreate it.
+                guard FileManager.default.fileExists(atPath: paths.root.path) else { return .idle }
+                do {
+                    if pool.now() >= nextCollection {
+                        let started = pool.now()
+                        lastCollection = started
+                        nextCollection = started.addingTimeInterval(Self.pollInterval)
+                        try pool.collectGarbage()
+                        collectedAt = started
+                    }
+                    // Re-read on every wake, also when no collection was due: a command may have moved a deadline.
+                    let keepAliveUntil = record.keepAliveUntil.flatMap { pool.now() < $0 ? $0 : nil }
+                    let wake = try pool.store.transaction { state -> Date? in
+                        let wake = pool.nextWake(in: state, collectedAt: collectedAt)
+                        // Released under the state lock: a command that adds work commits after this,
+                        // then finds no daemon and starts one, so no work is ever left unwatched.
+                        if wake == nil, keepAliveUntil == nil { lock.release() }
+                        return wake
+                    }
+                    if let wake {
+                        // Waiting out a keep-alive moved the next collection past the poll; work brings the poll back,
+                        // so a crashed claim or a killed `run` is still noticed within it.
+                        nextCollection = min(nextCollection, wake, (lastCollection ?? pool.now()).addingTimeInterval(Self.pollInterval))
+                        waitingOutKeepAlive = false
+                    } else if let keepAliveUntil {
+                        // Nothing can come due, so there is nothing to collect before the keep-alive ends or a command wakes it.
+                        if !waitingOutKeepAlive { pool.log("Nothing to watch; kept alive until \(Self.timestamp(keepAliveUntil)).") }
+                        waitingOutKeepAlive = true
+                        nextCollection = keepAliveUntil
+                    } else {
+                        pool.log("Nothing left to watch; exiting.")
+                        return .idle
+                    }
+                    if let lastCollection { nextCollection = max(nextCollection, lastCollection.addingTimeInterval(Self.minimumInterval)) }
+                } catch {
+                    pool.log("Collecting garbage failed: \(error). Retrying in \(Int(Self.pollInterval))s.")
                 }
-                // Re-read on every wake, also when no collection was due: a command may have moved a deadline.
-                let keepAliveUntil = record.keepAliveUntil.flatMap { pool.now() < $0 ? $0 : nil }
-                let wake = try pool.store.transaction { state -> Date? in
-                    let wake = pool.nextWake(in: state, collectedAt: collectedAt)
-                    // Released under the state lock: a command that adds work commits after this,
-                    // then finds no daemon and starts one, so no work is ever left unwatched.
-                    if wake == nil, keepAliveUntil == nil { lock.release() }
-                    return wake
-                }
-                if let wake {
-                    // Waiting out a keep-alive moved the next collection past the poll; work brings the poll back,
-                    // so a crashed claim or a killed `run` is still noticed within it.
-                    nextCollection = min(nextCollection, wake, (lastCollection ?? pool.now()).addingTimeInterval(Self.pollInterval))
-                    waitingOutKeepAlive = false
-                } else if let keepAliveUntil {
-                    // Nothing can come due, so there is nothing to collect before the keep-alive ends or a command wakes it.
-                    if !waitingOutKeepAlive { pool.log("Nothing to watch; kept alive until \(Self.timestamp(keepAliveUntil)).") }
-                    waitingOutKeepAlive = true
-                    nextCollection = keepAliveUntil
-                } else {
-                    pool.log("Nothing left to watch; exiting.")
-                    return .idle
-                }
-                if let lastCollection { nextCollection = max(nextCollection, lastCollection.addingTimeInterval(Self.minimumInterval)) }
-            } catch {
-                pool.log("Collecting garbage failed: \(error). Retrying in \(Int(Self.pollInterval))s.")
+                return nil
             }
+            if let outcome { return outcome }
             sleep(max(nextCollection.timeIntervalSince(pool.now()), 0))
         }
         pool.log("Daemon stopped.")

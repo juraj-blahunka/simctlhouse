@@ -254,39 +254,44 @@ public struct Runner: Sendable {
         // Covers a change between acquiring and starting the watcher.
         checkLeases()
         while true {
-            let deadline = [timeoutAt, killAt, nextLeaseCheck].compactMap { $0 }.min()
-            switch events.next(until: deadline) {
-            case .exited(let status):
-                if let stopReason { return stopReason }
-                let signal = status & 0x7f
-                return signal == 0 ? .exited((status >> 8) & 0xff) : .signaled(signal)
-            case .signal(let signal, let fromProcess):
-                if stopping {
-                    log("Received another signal; killing the command.")
-                } else {
-                    log("Received signal \(signal); stopping the command, and killing it if it has not exited in \(Int(gracePeriod))s.")
-                }
-                // A signal from the terminal reached the whole process group, the command included.
-                stop(signal, forward: fromProcess)
-            case .stateChanged:
-                checkLeases()
-            case nil:
-                let now = Date()
-                if let killAt, now >= killAt {
-                    log("The command did not exit within \(Int(gracePeriod))s of being stopped; killing it.")
-                    kill()
-                }
-                if let deadline = timeoutAt, now >= deadline {
-                    timeoutAt = nil
-                    log("The command ran longer than its --timeout of \(Int(timeout ?? 0))s; stopping it.")
-                    if stopReason == nil { stopReason = .timedOut }
-                    if !stopping { stop(SIGTERM) }
-                }
-                if now >= nextLeaseCheck {
-                    nextLeaseCheck = now.addingTimeInterval(Self.leaseCheckInterval)
+            // A pool per event: this loop never returns to a run loop, and a command can run for hours.
+            let outcome = autoreleasepool { () -> RunOutcome? in
+                let deadline = [timeoutAt, killAt, nextLeaseCheck].compactMap { $0 }.min()
+                switch events.next(until: deadline) {
+                case .exited(let status):
+                    if let stopReason { return stopReason }
+                    let signal = status & 0x7f
+                    return signal == 0 ? .exited((status >> 8) & 0xff) : .signaled(signal)
+                case .signal(let signal, let fromProcess):
+                    if stopping {
+                        log("Received another signal; killing the command.")
+                    } else {
+                        log("Received signal \(signal); stopping the command, and killing it if it has not exited in \(Int(gracePeriod))s.")
+                    }
+                    // A signal from the terminal reached the whole process group, the command included.
+                    stop(signal, forward: fromProcess)
+                case .stateChanged:
                     checkLeases()
+                case nil:
+                    let now = Date()
+                    if let killAt, now >= killAt {
+                        log("The command did not exit within \(Int(gracePeriod))s of being stopped; killing it.")
+                        kill()
+                    }
+                    if let deadline = timeoutAt, now >= deadline {
+                        timeoutAt = nil
+                        log("The command ran longer than its --timeout of \(Int(timeout ?? 0))s; stopping it.")
+                        if stopReason == nil { stopReason = .timedOut }
+                        if !stopping { stop(SIGTERM) }
+                    }
+                    if now >= nextLeaseCheck {
+                        nextLeaseCheck = now.addingTimeInterval(Self.leaseCheckInterval)
+                        checkLeases()
+                    }
                 }
+                return nil
             }
+            if let outcome { return outcome }
         }
     }
 }

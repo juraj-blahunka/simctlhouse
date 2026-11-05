@@ -487,8 +487,12 @@ struct ListWatch {
             handlers.forEach { $0.cancel() }
         }
         repeat {
-            let lines = render()
-            write(Self.frame(lines: lines, messages: messages.recent, at: Date(), size: Self.terminalSize()))
+            // A pool per refresh: this loop never returns to a run loop, so the objects Foundation autoreleases
+            // while running simctl and reading the state would otherwise pile up, about 30 KB a second.
+            autoreleasepool {
+                let lines = render()
+                write(Self.frame(lines: lines, messages: messages.recent, at: Date(), size: Self.terminalSize()))
+            }
         } while stop.wait(timeout: .now() + Self.interval) == .timedOut
     }
 
