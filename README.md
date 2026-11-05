@@ -100,7 +100,7 @@ To test or watch it without leasing a device, `simctlhouse daemon start` keeps i
 | `run [<name\|udid> \| --family --model --os] [--count N] [--timeout SECONDS] [--holder LABEL] -- COMMAND...` | Lease devices for as long as COMMAND runs, then release them; exits with COMMAND's code |
 | `release <name\|udid> [--lease-id ID]` | Return a device to the pool |
 | `renew <name\|udid> [--lease-id ID]` | Extend a lease by a full lease length from now |
-| `list [booted\|leased\|<search term>...] [--json]` | Show devices, filtered like `simctl list devices` |
+| `list [booted\|leased\|<search term>...] [--json \| --watch]` | Show devices, filtered like `simctl list devices`; `--watch` redraws every second |
 | `udid <name\|udid>` | Print a device's UDID |
 | `history [<name\|udid>] [--json]` | Show who held devices, when, and how each lease ended |
 | `create [--family] [--model] [--os]` | Add a free device to the pool ahead of time |

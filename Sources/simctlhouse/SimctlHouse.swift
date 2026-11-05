@@ -369,27 +369,121 @@ struct List: ParsableCommand {
                                            iOS version or holder
             Every keyword must match; a device matching any search term is shown.
             No match prints nothing. `simctlhouse udid` fails with exit code 3.
+            --watch redraws the list every second until q or Ctrl-C, like `watch simctlhouse list`.
             """
     )
 
     @Argument(help: ArgumentHelp("State or status keywords and search terms. Default: all devices.", valueName: "filter"))
     var filters: [String] = []
 
+    @Flag(name: .long, help: "Redraw every second until q or Ctrl-C.")
+    var watch = false
+
     @OptionGroup var output: OutputOptions
+
+    func validate() throws {
+        if watch, output.json { throw ValidationError("--watch shows the table; it does not go with --json.") }
+        if watch, isatty(STDOUT_FILENO) != 1 { throw ValidationError("--watch needs a terminal; scripts use `simctlhouse list --json`.") }
+    }
 
     func run() throws {
         try Runtime.run { pool in
+            if watch {
+                try ListWatch(pool: pool, filter: DeviceFilter(filters), filtered: !filters.isEmpty).run()
+                return
+            }
             let devices = try pool.list(DeviceFilter(filters))
             if output.json {
                 try Runtime.printJSON(devices)
                 return
             }
             guard !devices.isEmpty else {
-                Runtime.note(filters.isEmpty ? "No devices yet. `simctlhouse acquire` creates one on demand." : "No matching devices.")
+                Runtime.note(Self.empty(filtered: !filters.isEmpty))
                 return
             }
             print(Format.table(devices))
         }
+    }
+
+    static func empty(filtered: Bool) -> String {
+        filtered ? "No matching devices." : "No devices yet. `simctlhouse acquire` creates one on demand."
+    }
+}
+
+/// `list --watch`: redraws the table in place on the terminal's alternate screen, as `watch` does, until q or Ctrl-C.
+struct ListWatch {
+    static let interval: TimeInterval = 1
+
+    let pool: Pool
+    let filter: DeviceFilter
+    let filtered: Bool
+
+    func run() throws {
+        let stop = DispatchSemaphore(value: 0)
+        let handlers = [SIGINT, SIGTERM].map { number in
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number)
+            source.setEventHandler { stop.signal() }
+            source.resume()
+            return source
+        }
+        let keys = KeyReader { key in if key == "q" || key == "Q" { stop.signal() } }
+        // Alternate screen and hidden cursor, both restored on the way out so the shell gets its screen back.
+        write("\u{1B}[?1049h\u{1B}[?25l")
+        defer {
+            write("\u{1B}[?25h\u{1B}[?1049l")
+            keys?.restore()
+            handlers.forEach { $0.cancel() }
+        }
+        repeat {
+            write(Self.frame(lines: render(), at: Date()))
+        } while stop.wait(timeout: .now() + Self.interval) == .timedOut
+    }
+
+    /// One refresh. A failing refresh, such as a slow CoreSimulator, shows the error and the next one tries again.
+    private func render() -> [String] {
+        do {
+            let devices = try pool.list(filter)
+            return devices.isEmpty ? [List.empty(filtered: filtered)] : Format.table(devices).components(separatedBy: "\n")
+        } catch {
+            return ["error: \(error)"]
+        }
+    }
+
+    /// Draws from the top left, clearing the rest of each line and everything below, so nothing flickers or lingers.
+    static func frame(lines: [String], at date: Date) -> String {
+        let header = "Every \(Int(interval))s, \(Format.timestamp(date)). Press q to quit."
+        return "\u{1B}[H" + ([header, ""] + lines).map { $0 + "\u{1B}[K" }.joined(separator: "\n") + "\u{1B}[J"
+    }
+
+    private func write(_ text: String) {
+        FileHandle.standardOutput.write(Data(text.utf8))
+    }
+}
+
+/// Hands single key presses from the terminal to `onKey`, without waiting for return and without echoing them.
+/// Ctrl-C still raises SIGINT. Nil when stdin is no terminal. `restore` puts the terminal back as it was.
+final class KeyReader: @unchecked Sendable {
+    private var original = termios()
+    private let source: DispatchSourceRead
+
+    init?(onKey: @escaping @Sendable (Character) -> Void) {
+        guard isatty(STDIN_FILENO) == 1, tcgetattr(STDIN_FILENO, &original) == 0 else { return nil }
+        var raw = original
+        raw.c_lflag &= ~tcflag_t(ICANON | ECHO)
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw)
+        source = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO)
+        source.setEventHandler {
+            var byte: UInt8 = 0
+            guard read(STDIN_FILENO, &byte, 1) == 1 else { return }
+            onKey(Character(UnicodeScalar(byte)))
+        }
+        source.resume()
+    }
+
+    func restore() {
+        source.cancel()
+        tcsetattr(STDIN_FILENO, TCSANOW, &original)
     }
 }
 
