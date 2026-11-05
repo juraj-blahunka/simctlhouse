@@ -45,9 +45,13 @@ public struct AcquireRequest: Sendable {
     /// Binds the lease to this running process (`simctlhouse run`): it does not expire while the process runs,
     /// and the device is reclaimed once the process is gone.
     public var owner: Int32?
+    /// False leaves the device as it is: a new one stays shut down, a booted one stays booted.
+    /// For work that needs no running simulator, such as `xcodebuild build`, or that boots it itself.
+    public var boot: Bool
 
     public init(
-        spec: DeviceSpec = DeviceSpec(), device: String? = nil, holder: String? = nil, pid: Int32? = nil, cwd: String? = nil, owner: Int32? = nil
+        spec: DeviceSpec = DeviceSpec(), device: String? = nil, holder: String? = nil, pid: Int32? = nil, cwd: String? = nil, owner: Int32? = nil,
+        boot: Bool = true
     ) {
         self.spec = spec
         self.device = device
@@ -55,6 +59,7 @@ public struct AcquireRequest: Sendable {
         self.pid = pid
         self.cwd = cwd
         self.owner = owner
+        self.boot = boot
     }
 }
 
@@ -149,7 +154,7 @@ public struct Pool: Sendable {
 
     // MARK: - acquire / release / renew
 
-    /// Leases a specific free device, or a free matching one, creating it if needed, then boots it.
+    /// Leases a specific free device, or a free matching one, creating it if needed, then boots it unless `request.boot` is false.
     public func acquire(_ request: AcquireRequest) throws -> DeviceInfo {
         let catalog = try collectGarbageAndLoadCatalog()
 
@@ -240,10 +245,22 @@ public struct Pool: Sendable {
             device = reused
             isBooted = booted
         case .provision(let name, let resolved, let claim):
-            log("No free \(resolved.deviceType.name) (iOS \(resolved.runtime.version)) in the pool; creating \(name). Its first boot takes about 30s.")
+            log(
+                request.boot
+                    ? "No free \(resolved.deviceType.name) (iOS \(resolved.runtime.version)) in the pool; creating \(name). Its first boot takes about 30s."
+                    : "No free \(resolved.deviceType.name) (iOS \(resolved.runtime.version)) in the pool; creating \(name)."
+            )
             device = try provision(name: name, resolved: resolved, claim: claim, finalStatus: .leased)
         }
 
+        if request.boot {
+            try boot(device, isBooted: isBooted)
+        }
+        return try info(for: startLease(device), catalog: catalog)
+    }
+
+    /// Boots a freshly leased device and waits until it is ready.
+    private func boot(_ device: PoolDevice, isBooted: Bool) throws {
         do {
             if !isBooted { log("Booting \(device.name)...") }
             // Also called for booted devices: bootstatus returns immediately once boot has fully completed.
@@ -254,7 +271,6 @@ public struct Pool: Sendable {
             try? dropAfterFailedBoot(leaseId: device.lease!.id)
             throw error
         }
-        return try info(for: startLease(device), catalog: catalog)
     }
 
     /// Restarts the lease's clock now that the device is ready, so create and boot time do not count against it.

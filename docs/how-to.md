@@ -128,6 +128,15 @@ simctlhouse renew "$UDID" --lease-id "$LEASE_ID"    # before the lease runs out 
 simctlhouse release "$UDID" --lease-id "$LEASE_ID"
 ```
 
+Work that needs no running simulator, such as `xcodebuild build` or `xcodebuild build-for-testing`, can skip the boot.
+A new device then stays shut down, and a free device that is already booted stays booted:
+
+```sh
+UDID=$(simctlhouse acquire --skip-boot --holder "$TASK_ID")
+xcodebuild build -scheme App -destination "id=$UDID"
+simctlhouse release "$UDID"
+```
+
 To get the same device back later (for example to keep an installed app), lease it by name or UDID:
 
 ```sh
@@ -310,7 +319,7 @@ By hand:
 2. Run `scripts/release.sh 1.4.0`.
    It refuses to run if the version does not match, if the sources have uncommitted changes, or if tag `v1.4.0` exists elsewhere.
    It runs the tests and lint, builds and signs through `scripts/build.sh`, notarizes, checks that Apple published the notarization ticket, packs `dist/simctlhouse-1.4.0-macos.tar.gz`, installs that tarball into a temporary directory to check it, and writes `dist/simctlhouse.rb`.
-3. Run `scripts/smoke-test.sh dist/simctlhouse-1.4.0-macos.tar.gz`: in a throwaway home, the shipped binary acquires a real simulator, starts, stops and restarts the daemon, releases the device, waits for the daemon to shut it down and exit on its own, and deletes it; the script checks that no other simulator was touched.
+3. Run `scripts/smoke-test.sh dist/simctlhouse-1.4.0-macos.tar.gz`: in a throwaway home, the shipped binary acquires a real simulator without booting it, starts, stops and restarts the daemon, releases and deletes the device, runs a command on a booted device with `run`, and waits for the daemon to shut that device down and exit on its own; the script checks that no other simulator was touched.
 4. Tag the commit `v1.4.0`, push it, and attach the tarball to a GitHub release of that tag.
 5. Copy `dist/simctlhouse.rb` to `Formula/simctlhouse.rb` in the tap and push.
    The tap's `tests` workflow then audits the formula, installs it on macOS 15 and 26 and runs its `test` block; wait for it to pass.

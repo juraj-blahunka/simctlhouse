@@ -49,6 +49,7 @@ The lease lasts as long as the command, so there is nothing to renew.
    Options: `--family ipad` (default `iphone`), `--model "iPhone 17 Pro"` (exact name from `xcrun simctl list devicetypes`), `--os 26` or `--os 26.5`.
    Defaults are the latest iPhone Pro or iPad Pro 11-inch on the newest installed iOS.
    The device is booted when the command returns: at once for a free device, after about 30s when one has to be created.
+   If you only build (`xcodebuild build`, `build-for-testing`) and need no running simulator, add `--skip-boot` to skip that wait.
    To get a specific device back (say, one where your app is already installed), pass its name or UDID: `simctlhouse acquire <name|udid> --holder "..."`.
 
 2. Use the UDID everywhere, never `booted` or a device name:

@@ -131,6 +131,7 @@ struct Acquire: ParsableCommand {
         discussion: """
             Use the UDID with `xcodebuild -destination id=<UDID>` or `xcrun simctl <cmd> <UDID>`. Release it when done.
             Pass a device name or UDID to lease that specific free device instead, e.g. one you used before.
+            Pass --skip-boot when you need no running simulator, e.g. for `xcodebuild build`: a new device stays shut down, a booted one stays booted.
             """
     )
 
@@ -143,6 +144,9 @@ struct Acquire: ParsableCommand {
     @Option(name: .long, help: "Label identifying the agent/task holding the lease. Default: $SIMCTLHOUSE_HOLDER, else the agent and directory.")
     var holder: String?
 
+    @Flag(name: .long, help: "Do not boot the device; it stays in whatever state it is in.")
+    var skipBoot = false
+
     func validate() throws {
         if device != nil && !spec.isEmpty { throw ValidationError("Pass a device name/UDID or --family/--model/--os, not both.") }
     }
@@ -154,7 +158,8 @@ struct Acquire: ParsableCommand {
                 device: device,
                 holder: holder ?? ProcessInfo.processInfo.environment["SIMCTLHOUSE_HOLDER"] ?? DefaultHolder.label(),
                 pid: getppid(),
-                cwd: FileManager.default.currentDirectoryPath
+                cwd: FileManager.default.currentDirectoryPath,
+                boot: !skipBoot
             )
             let device = try pool.acquire(request)
             if output.json {

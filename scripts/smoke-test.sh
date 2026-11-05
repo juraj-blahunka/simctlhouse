@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs a release tarball end to end against real simulators, the way a user would after `brew install`:
-# link the skill, acquire a device, check the daemon, release it, delete the pool, wrap a command in `run`,
-# and check that no other simulator was touched.
+# link the skill, acquire a device without booting it, check the daemon, release it, delete the pool,
+# wrap a command in `run` (the one boot), let the daemon shut that device down, and check that no other simulator was touched.
 # Everything runs in throwaway directories (SIMCTLHOUSE_HOME and the skills directory), never in your own setup.
 set -euo pipefail
 
@@ -26,6 +26,7 @@ fail() { echo "error: $*" >&2; exit 1; }
 udids() { xcrun simctl list devices -j | sed -nE 's/.*"udid" : "([^"]+)".*/\1/p' | sort; }
 daemon_running() { [[ "$("$bin" daemon status --json)" == *'"running" : true'* ]]; }
 daemon_pid() { "$bin" daemon status --json | sed -nE 's/.*"pid" : ([0-9]+).*/\1/p'; }
+shut_down() { xcrun simctl list devices | /usr/bin/grep -F "$1" | /usr/bin/grep -qF "(Shutdown)"; }
 kept_alive() { [[ "$("$bin" daemon status --json)" == *'"keepAliveUntil"'* ]]; }
 # Waits up to $1 seconds for the daemon to exit on its own.
 wait_for_daemon_exit() { for _ in $(seq $(($1 * 2))); do daemon_running && sleep 0.5 || return 0; done; ! daemon_running; }
@@ -60,10 +61,10 @@ step "Linking the skill"
 
 before="$(udids)"
 
-step "Acquiring a device (creates and boots one; about 30 seconds)"
-udid="$("$bin" acquire --holder smoke-test)"
+step "Acquiring a device without booting it"
+udid="$("$bin" acquire --skip-boot --holder smoke-test)"
 [[ -n "$udid" ]] || fail "acquire printed no UDID."
-xcrun simctl list devices booted | /usr/bin/grep -qF "$udid" || fail "acquired device $udid is not booted."
+shut_down "$udid" || fail "acquire --skip-boot booted device $udid."
 "$bin" list leased | /usr/bin/grep -qF "$udid" || fail "list does not show $udid as leased."
 
 step "Checking the daemon acquire started"
@@ -86,11 +87,9 @@ daemon_running || fail "daemon start --keep-alive did not leave a daemon running
 kept_alive || fail "daemon start --keep-alive started a daemon without a keep-alive."
 "$bin" daemon status | /usr/bin/grep -q "^Kept alive until" || fail "daemon status does not show the keep-alive."
 
-step "Releasing it; the daemon shuts it down and stops on its own"
+step "Releasing it; the daemon stops on its own"
 "$bin" release "$udid"
 wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of the release."
-xcrun simctl list devices | /usr/bin/grep -F "$udid" | /usr/bin/grep -qF "(Shutdown)" ||
-    fail "the daemon stopped but left released device $udid booted."
 
 step "Deleting it"
 "$bin" delete --all --force
@@ -107,8 +106,11 @@ read -r run_udid run_arg <<<"$out"
 status=0
 "$bin" run -- simctlhouse-smoke-no-such-command 2>/dev/null || status=$?
 [[ $status -eq 127 ]] || fail "run of a missing command exited with $status instead of 127."
+
+step "Letting the daemon shut down the released device and stop on its own"
+wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of the release."
+shut_down "$run_udid" || fail "the daemon stopped but left released device $run_udid booted."
 "$bin" delete --all --force
-wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of deleting the pool."
 
 step "Keeping a daemon alive with nothing to watch"
 "$bin" daemon start --keep-alive 0 2>/dev/null

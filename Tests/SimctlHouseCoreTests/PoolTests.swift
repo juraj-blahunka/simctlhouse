@@ -28,6 +28,28 @@ import Testing
         #expect(h.backend.device(again.udid)?.state == "Booted")
     }
 
+    @Test func acquireWithoutBootLeavesTheDeviceAsItIs() throws {
+        let created = try h.pool.acquire(AcquireRequest(boot: false))
+        #expect(created.status == .leased)
+        #expect(created.state == "Shutdown")
+        #expect(h.backend.callCount(prefix: "boot") == 0)
+
+        try h.pool.release(created.name)
+        let booted = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(booted.name)
+        let reused = try h.pool.acquire(AcquireRequest(boot: false))
+        #expect(reused.udid == created.udid)
+        #expect(reused.state == "Booted")
+        #expect(h.backend.callCount(prefix: "boot") == 1)
+        #expect(h.backend.callCount(prefix: "shutdown") == 0)
+    }
+
+    @Test func acquireWithoutBootStartsTheLeaseOnceTheDeviceIsCreated() throws {
+        h.backend.onCreate = { h.clock.advance(minutes: 5) }
+        let device = try h.pool.acquire(AcquireRequest(boot: false))
+        #expect(device.expiresAt == h.clock.now.addingTimeInterval(30 * 60))
+    }
+
     @Test func acquirePrefersBootedDevices() throws {
         let a = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         let b = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
