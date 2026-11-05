@@ -24,6 +24,7 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     var onCreate: (@Sendable () -> Void)?
     var onErase: (@Sendable () -> Void)?
     var onBoot: (@Sendable () -> Void)?
+    var onDelete: (@Sendable () -> Void)?
 
     let types: [SimDeviceType] = [
         SimDeviceType(identifier: "type.iPhone-17-Pro", name: "iPhone 17 Pro", productFamily: "iPhone", modelIdentifier: "iPhone18,1"),
@@ -103,6 +104,7 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     func diskUsage(udid: String) -> Int64? { lock.withLock { storage[udid].map { _ in 2_400_000_000 } } }
 
     func delete(udid: String) throws {
+        onDelete?()
         try lock.withLock {
             calls.append("delete \(storage[udid]?.name ?? udid)")
             if let name = storage[udid]?.name, failDelete.contains(name) {

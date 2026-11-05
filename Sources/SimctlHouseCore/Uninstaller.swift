@@ -61,15 +61,34 @@ public struct Uninstaller: Sendable {
         for link in links { log("Removed the skill link \(link.path).") }
         // A command run meanwhile, such as an agent's acquire, may have started it again.
         try stopDaemon(log: { _ in })
+        try removeHome(log: log)
+    }
+
+    /// How often devices that agents add while uninstalling are deleted before giving up.
+    static let deleteAttempts = 3
+
+    /// Removes the state directory under the state lock, and only once it lists no device: removing it after an agent's
+    /// acquire committed would leave that simulator with nothing tracking it (D3). Such a device is deleted first.
+    private func removeHome(log: (String) -> Void) throws {
         let home = pool.store.paths.root
-        if FileManager.default.fileExists(atPath: home.path) {
-            do {
-                try FileManager.default.removeItem(at: home)
-            } catch {
-                throw SimctlHouseError.io("Cannot remove \(home.path): \(error.localizedDescription)")
+        for _ in 0..<Self.deleteAttempts {
+            guard FileManager.default.fileExists(atPath: home.path) else { return }
+            let removed = try pool.store.transaction { state -> Bool in
+                guard state.devices.isEmpty else { return false }
+                do {
+                    try FileManager.default.removeItem(at: home)
+                } catch {
+                    throw SimctlHouseError.io("Cannot remove \(home.path): \(error.localizedDescription)")
+                }
+                return true
             }
-            log("Removed \(home.path).")
+            if removed {
+                log("Removed \(home.path).")
+                return
+            }
+            _ = try pool.deleteAll(force: true)
         }
+        throw SimctlHouseError.io("Agents kept adding devices while uninstalling. Stop them, then run `simctlhouse uninstall` again.")
     }
 
     private func stopDaemon(log: (String) -> Void) throws {

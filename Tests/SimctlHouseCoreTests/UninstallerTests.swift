@@ -67,6 +67,33 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: h.root.path))
     }
 
+    @Test func aDeviceAnAgentAcquiresMeanwhileIsDeletedToo() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        let late = Locked<DeviceInfo?>(nil)
+        h.backend.onDelete = { [h] in
+            h.backend.onDelete = nil
+            // Another agent's acquire, between the delete of the last device and the removal of the state.
+            late.mutate { $0 = try? h.pool.acquire(AcquireRequest()) }
+        }
+        try uninstaller.run(log: { _ in })
+        let udid = try #require(late.value?.udid)
+        #expect(!h.backend.existsOnDisk(udid: device.udid!))
+        // Removing the state without it would leave a simulator nothing tracks.
+        #expect(!h.backend.existsOnDisk(udid: udid))
+        #expect(!FileManager.default.fileExists(atPath: h.root.path))
+    }
+
+    @Test func agentsThatKeepAddingDevicesKeepTheStateForAnotherTry() throws {
+        _ = try h.pool.acquire(AcquireRequest())
+        h.backend.onDelete = { [h] in _ = try? h.pool.acquire(AcquireRequest()) }
+        #expect(throws: (any Error).self) { try uninstaller.run(log: { _ in }) }
+        h.backend.onDelete = nil
+        // Every device left is still tracked.
+        let devices = try h.state().devices
+        #expect(!devices.isEmpty)
+        #expect(devices.allSatisfy { h.backend.existsOnDisk(udid: $0.udid!) })
+    }
+
     @Test func anEmptyMachineHasNothingToRemove() throws {
         let plan = try uninstaller.plan()
         #expect(plan.devices.isEmpty && plan.links.isEmpty && !plan.daemonRunning)

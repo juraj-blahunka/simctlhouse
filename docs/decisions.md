@@ -354,4 +354,5 @@ Trade-off: the default says who and where, not what; the skill still asks for a 
 The binary is left to the package manager; the command ends by printing `brew uninstall simctlhouse` or the `rm` for a binary installed otherwise.
 It shows what it will remove and asks, since it ends other agents' leases; without a terminal it refuses unless `--yes` is passed, so an agent cannot run it by accident, and the skill forbids it.
 If a device cannot be deleted, the state and the links stay, so running it again picks up where it stopped instead of leaving simulators nothing tracks.
+The state directory is removed under the state lock, and only once it lists no device, so a device that an agent acquired meanwhile is deleted too rather than left untracked.
 Trade-off: lease history and the daemon log go with the state directory.
