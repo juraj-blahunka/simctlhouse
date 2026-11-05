@@ -112,6 +112,7 @@ To test or watch it without leasing a device, `simctlhouse daemon start` keeps i
 | `daemon start \| serve [--keep-alive SECONDS]` | Start the daemon in the background or the foreground, kept running at least 30 minutes by default, for testing |
 | `home [--open]` | Print the state directory (`~/.simctlhouse`), or open it in Finder |
 | `skill install\|uninstall\|status [--skills-dir DIR]...` | Link the agent skill shipped with a release into your coding agents |
+| `version` | Print the version, like `--version` |
 
 Defaults: iPhone, the latest `iPhone N Pro`, or the latest `iPad Pro 11-inch` with `--family ipad`, on the newest installed iOS runtime that supports it.
 Devices are named with two random words, such as `amber-falcon`.

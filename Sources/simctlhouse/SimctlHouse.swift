@@ -29,7 +29,7 @@ struct SimctlHouse: ParsableCommand {
         version: "0.1.1",
         subcommands: [
             Acquire.self, Release.self, Renew.self, Run.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self,
-            DaemonCommand.self, Home.self, Skill.self,
+            DaemonCommand.self, Home.self, Skill.self, Version.self,
         ]
     )
 
@@ -312,6 +312,15 @@ struct UDID: ParsableCommand {
 
     func run() throws {
         try Runtime.run { pool in print(try pool.udid(of: device)) }
+    }
+}
+
+/// `simctlhouse version`, for everyone who types it instead of `--version`.
+struct Version: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Print the version, like --version.")
+
+    func run() throws {
+        print(Runtime.version)
     }
 }
 
