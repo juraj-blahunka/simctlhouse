@@ -338,7 +338,14 @@ struct Create: ParsableCommand {
 }
 
 struct Delete: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Shut down and delete pool devices.")
+    static let configuration = CommandConfiguration(
+        abstract: "Shut down and delete pool devices.",
+        discussion: """
+            --unused deletes free devices that nobody acquired, released or renewed for --for (default 7d), to get their disk space back:
+            a simulator that has booted takes about 2.4 GB. Leased and busy devices, and free ones another process uses, are skipped.
+            The next acquire that needs such a device creates a new one, whose first boot takes about 30s.
+            """
+    )
 
     @Argument(help: ArgumentHelp("Devices to delete.", valueName: DeviceRef.valueName))
     var devices: [String] = []
@@ -346,16 +353,68 @@ struct Delete: ParsableCommand {
     @Flag(name: .long, help: "Delete every simctlhouse device.")
     var all = false
 
+    @Flag(name: .long, help: "Delete free devices nobody has used for --for.")
+    var unused = false
+
+    @Option(
+        name: .customLong("for"),
+        help: ArgumentHelp("With --unused: how long unused, e.g. 7d, 12h, 30m, 45s, or 0 for every free device.", valueName: "duration"))
+    var age: Age?
+
+    @Flag(name: .long, help: "With --unused: show what would be deleted, and delete nothing.")
+    var dryRun = false
+
     @Flag(name: .long, help: "Delete even if leased.")
     var force = false
 
+    @Flag(name: [.customShort("j"), .long], help: "With --unused: print the deleted devices as JSON to stdout.")
+    var json = false
+
     func validate() throws {
-        if all != devices.isEmpty { throw ValidationError("Pass device names/UDIDs or --all, not both or neither.") }
+        if [!devices.isEmpty, all, unused].filter({ $0 }).count != 1 {
+            throw ValidationError("Pass device names/UDIDs, --all or --unused: exactly one of them.")
+        }
+        if !unused, age != nil || dryRun || json { throw ValidationError("--for, --dry-run and --json go with --unused.") }
+        if unused, force { throw ValidationError("--unused never deletes leased devices; --force does not apply.") }
     }
 
     func run() throws {
         try Runtime.run { pool in
-            _ = all ? try pool.deleteAll(force: force) : try pool.delete(devices, force: force)
+            guard unused else {
+                _ = all ? try pool.deleteAll(force: force) : try pool.delete(devices, force: force)
+                return
+            }
+            let age = self.age ?? .week
+            let verb = dryRun ? "Would delete" : "Deleted"
+            let devices = try pool.deleteUnused(age: age.seconds, dryRun: dryRun) { device in
+                let size = device.bytes.map { Format.bytes($0) + ", " } ?? ""
+                Runtime.note("\(verb) \(device.name) (\(size)unused for \(Format.age(since: device.lastUsedAt))).")
+            }
+            if json { try Runtime.printJSON(devices) }
+            Runtime.note(Format.unusedSummary(devices, age: age, dryRun: dryRun))
+        }
+    }
+
+    /// How long a device must have gone unused: a number with a unit, d, h, m or s, or 0.
+    struct Age: ExpressibleByArgument, Equatable {
+        static let week = Age(seconds: 7 * 24 * 3600, text: "7d")
+
+        var seconds: TimeInterval
+        var text: String
+
+        init(seconds: TimeInterval, text: String) {
+            self.seconds = seconds
+            self.text = text
+        }
+
+        init?(argument: String) {
+            if argument == "0" {
+                self.init(seconds: 0, text: "0s")
+                return
+            }
+            let units: [Character: TimeInterval] = ["d": 24 * 3600, "h": 3600, "m": 60, "s": 1]
+            guard let unit = argument.last.flatMap({ units[$0] }), let count = Int(argument.dropLast()), count >= 0 else { return nil }
+            self.init(seconds: TimeInterval(count) * unit, text: argument)
         }
     }
 }
@@ -682,6 +741,28 @@ enum Format {
         let seconds = Int(interval.rounded())
         if seconds <= 0 { return "expired" }
         return seconds < 60 ? "\(seconds)s" : "\((seconds + 30) / 60)m"
+    }
+
+    /// How long ago, in the largest whole unit: 9d, 5h, 12m, 30s.
+    static func age(since date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        if seconds >= 24 * 3600 { return "\(seconds / (24 * 3600))d" }
+        if seconds >= 3600 { return "\(seconds / 3600)h" }
+        if seconds >= 60 { return "\(seconds / 60)m" }
+        return "\(seconds)s"
+    }
+
+    static func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+
+    static func unusedSummary(_ devices: [UnusedDevice], age: Delete.Age, dryRun: Bool) -> String {
+        guard !devices.isEmpty else {
+            return age.seconds == 0 ? "No free device to delete." : "No free device has been unused for \(age.text)."
+        }
+        let count = devices.count == 1 ? "1 device" : "\(devices.count) devices"
+        let total = bytes(devices.compactMap(\.bytes).reduce(0, +))
+        return dryRun ? "Would delete \(count), freeing \(total)." : "Deleted \(count), freed \(total)."
     }
 
     static func duration(from start: Date, to end: Date) -> String {

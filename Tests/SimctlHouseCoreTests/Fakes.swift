@@ -99,6 +99,9 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
 
     func existsOnDisk(udid: String) -> Bool { lock.withLock { storage[udid] != nil } }
 
+    /// A booted simulator's data is about 2.4 GB; one never booted, about 17 MB.
+    func diskUsage(udid: String) -> Int64? { lock.withLock { storage[udid].map { _ in 2_400_000_000 } } }
+
     func delete(udid: String) throws {
         try lock.withLock {
             calls.append("delete \(storage[udid]?.name ?? udid)")

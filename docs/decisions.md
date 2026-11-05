@@ -288,3 +288,12 @@ Without this, an older build decodes a newer file, ignores the fields it does no
 Replacing the daemon after an upgrade (D29) is not enough on its own: any old binary can write the file, such as a second install, a script pinned to an old path, or an old daemon finishing its last collection.
 Trade-off: after an upgrade that bumps the version, an older binary on the same machine stops working instead of limping on.
 
+## D32. Unused devices are deleted on request, never automatically
+
+A simulator that has booted takes about 2.4 GB, and the pool only grows: a day with eight parallel agents leaves eight devices behind, and after an Xcode update the devices of the old iOS version never match a default `acquire` again.
+`delete --unused` deletes free devices whose `lastActivityAt` (the last acquire, release or renew) is older than `--for`, 7 days by default, and reports the space each one took.
+Deleting them automatically was rejected: a device would disappear without anyone asking, and an agent that kept a device's name to reuse it would find it gone.
+The selection happens in the transaction that claims the devices, so a device acquired meanwhile is never deleted; leased and busy devices, and free ones another process uses (D14), are skipped without needing `--force`.
+Sizes are measured only for the devices being deleted, once claimed and outside the state lock, so `list` stays fast and shows no sizes.
+The history reason is `deleted`, as for any other `delete`, so `state.json` does not change.
+Trade-off: the disk space only comes back when someone runs the command; `list` does not hint at it.

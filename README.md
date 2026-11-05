@@ -82,6 +82,7 @@ To test or watch it without leasing a device, `simctlhouse daemon start` keeps i
 | `create [--family] [--model] [--os]` | Add a free device to the pool ahead of time |
 | `erase <name\|udid> [--force]` | Erase a device's contents and settings (keeps the name and UDID) |
 | `delete <name\|udid>... \| --all [--force]` | Delete devices |
+| `delete --unused [--for 7d] [--dry-run] [--json]` | Delete free devices nobody has used for a week, and report the disk space freed |
 | `gc [--json]` | Reclaim expired leases and shut down every free booted device now |
 | `daemon status [--json] \| stop` | Inspect or stop the background daemon; commands start it on their own |
 | `daemon start \| serve [--keep-alive SECONDS]` | Start the daemon in the background or the foreground, kept running at least 30 minutes by default, for testing |

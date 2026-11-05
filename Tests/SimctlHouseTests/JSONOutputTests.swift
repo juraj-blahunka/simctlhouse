@@ -69,6 +69,21 @@ import Testing
                 """)
     }
 
+    @Test func unusedDevices() throws {
+        let device = UnusedDevice(name: "wild-dragon", udid: "74592BC9-F43A-4248-86E0-A313AB85D16B", lastUsedAt: Self.acquiredAt, bytes: 2_499_124_000)
+        #expect(
+            try Runtime.json([device]) == """
+                [
+                  {
+                    "bytes" : 2499124000,
+                    "lastUsedAt" : "2026-10-26T18:00:00Z",
+                    "name" : "wild-dragon",
+                    "udid" : "74592BC9-F43A-4248-86E0-A313AB85D16B"
+                  }
+                ]
+                """)
+    }
+
     @Test func gcReport() throws {
         let report = GCReport(reclaimed: ["ready-lion"], shutDown: ["amber-falcon"], forgotten: [], recovered: [])
         #expect(

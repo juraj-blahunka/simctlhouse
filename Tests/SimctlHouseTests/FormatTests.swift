@@ -65,6 +65,35 @@ import Testing
 
     @Test(
         arguments: [
+            ("7d", 7 * 24 * 3600.0), ("12h", 12 * 3600), ("30m", 30 * 60), ("45s", 45), ("0", 0), ("0d", 0),
+        ] as [(String, TimeInterval)])
+    func unusedAgesParse(argument: String, seconds: TimeInterval) throws {
+        #expect(try #require(Delete.Age(argument: argument)).seconds == seconds)
+    }
+
+    @Test(arguments: ["7", "7w", "d", "-1d", "1.5d", ""])
+    func malformedAgesAreRejected(argument: String) {
+        #expect(Delete.Age(argument: argument) == nil)
+    }
+
+    @Test func ageShowsTheLargestWholeUnit() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        #expect(Format.age(since: now.addingTimeInterval(-9.5 * 24 * 3600), now: now) == "9d")
+        #expect(Format.age(since: now.addingTimeInterval(-5 * 3600 - 59), now: now) == "5h")
+        #expect(Format.age(since: now.addingTimeInterval(-12 * 60), now: now) == "12m")
+        #expect(Format.age(since: now.addingTimeInterval(-30), now: now) == "30s")
+    }
+
+    @Test func unusedSummaryCountsAndTotals() {
+        let device = UnusedDevice(name: "wild-dragon", udid: nil, lastUsedAt: Date(), bytes: 2_400_000_000)
+        #expect(Format.unusedSummary([device, device], age: .week, dryRun: false) == "Deleted 2 devices, freed \(Format.bytes(4_800_000_000)).")
+        #expect(Format.unusedSummary([device], age: .week, dryRun: true) == "Would delete 1 device, freeing \(Format.bytes(2_400_000_000)).")
+        #expect(Format.unusedSummary([], age: .week, dryRun: false) == "No free device has been unused for 7d.")
+        #expect(Format.unusedSummary([], age: Delete.Age(argument: "0")!, dryRun: false) == "No free device to delete.")
+    }
+
+    @Test(
+        arguments: [
             (0, "0s"),
             (59, "59s"),
             (60, "1m"),

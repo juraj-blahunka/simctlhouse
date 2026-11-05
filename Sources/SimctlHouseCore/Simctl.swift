@@ -69,6 +69,8 @@ public protocol SimulatorBackend: Sendable {
     /// Whether the simulator still exists on disk. `devices()` can briefly leave out devices that exist,
     /// for example while CoreSimulator restarts, so a device is only taken for gone when this says so too (D23).
     func existsOnDisk(udid: String) -> Bool
+    /// Disk space the simulator takes, in bytes, or nil if it cannot be measured.
+    func diskUsage(udid: String) -> Int64?
 }
 
 public struct Simctl: SimulatorBackend {
@@ -129,6 +131,19 @@ public struct Simctl: SimulatorBackend {
 
     public func delete(udid: String) throws {
         _ = try run(["delete", udid])
+    }
+
+    /// Allocated size of the device's directory, which holds all of its data. Walks the tree, so call it for a few devices only.
+    public func diskUsage(udid: String) -> Int64? {
+        let directory = devicesDirectory.appending(path: udid)
+        guard existsOnDisk(udid: udid),
+            let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.totalFileAllocatedSizeKey], options: [])
+        else { return nil }
+        var total: Int64 = 0
+        for case let file as URL in files {
+            total += Int64((try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
+        }
+        return total
     }
 
     /// CoreSimulator keeps each device's configuration in `<UDID>/device.plist`; deleting the device removes the directory.

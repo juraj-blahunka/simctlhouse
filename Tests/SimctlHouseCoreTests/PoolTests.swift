@@ -447,6 +447,74 @@ import Testing
         #expect(try h.pool.history().map(\.name) == [device.name, renamed.name])
     }
 
+    // MARK: - delete --unused
+
+    static let week: TimeInterval = 7 * 24 * 3600
+
+    @Test func deletesFreeDevicesUnusedForAWeek() throws {
+        let old = try h.pool.acquire(AcquireRequest())
+        let recent = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(old.name)
+        try h.pool.release(recent.name)
+        h.clock.advance(minutes: 24 * 60)
+        _ = try h.pool.acquire(AcquireRequest(device: recent.name))
+        try h.pool.release(recent.name)
+        h.clock.advance(minutes: 6 * 24 * 60)
+        let announced = Messages()
+        let deleted = try h.pool.deleteUnused(age: Self.week) { announced.append($0.name) }
+        #expect(deleted.map(\.name) == [old.name])
+        #expect(announced.all == [old.name])
+        #expect(deleted.first?.bytes == 2_400_000_000)
+        #expect(deleted.first?.lastUsedAt == h.clock.now.addingTimeInterval(-Self.week))
+        #expect(!h.backend.existsOnDisk(udid: old.udid!))
+        #expect(try h.pool.history(old.name).first?.retiredReason == .deleted)
+        #expect(try h.state().devices.map(\.name) == [recent.name])
+    }
+
+    @Test func anAcquireOrRenewCountsAsUse() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(device.name)
+        h.clock.advance(minutes: 6 * 24 * 60)
+        _ = try h.pool.acquire(AcquireRequest())
+        h.clock.advance(minutes: 20)
+        _ = try h.pool.renew(device.name)
+        try h.pool.release(device.name)
+        h.clock.advance(minutes: 3 * 24 * 60)
+        #expect(try h.pool.deleteUnused(age: Self.week).isEmpty)
+    }
+
+    @Test func neverDeletesLeasedOrForeignUsedDevices() throws {
+        // A lease long enough to outlast the ten days below.
+        var config = PoolConfig()
+        config.leaseDuration = 30 * 24 * 3600
+        let pool = h.pool(config: config)
+        let leased = try pool.acquire(AcquireRequest())
+        let foreign = try pool.acquire(AcquireRequest())
+        try pool.release(foreign.name)
+        h.scanner.set(["xcodebuild test -destination id=\(foreign.udid!)"])
+        h.clock.advance(minutes: 10 * 24 * 60)
+        // A 0 age takes every free device that nobody uses.
+        #expect(try pool.deleteUnused(age: 0).isEmpty)
+        #expect(Set(try h.state().devices.map(\.name)) == [leased.name, foreign.name])
+    }
+
+    @Test func aDryRunDeletesNothing() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(device.name)
+        h.clock.advance(minutes: 8 * 24 * 60)
+        let wouldGo = try h.pool.deleteUnused(age: Self.week, dryRun: true)
+        #expect(wouldGo.map(\.name) == [device.name])
+        #expect(wouldGo.first?.bytes == 2_400_000_000)
+        #expect(h.backend.existsOnDisk(udid: device.udid!))
+        #expect(try h.state().devices.map(\.name) == [device.name])
+    }
+
+    @Test func aZeroAgeDeletesEveryFreeDevice() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        try h.pool.release(device.name)
+        #expect(try h.pool.deleteUnused(age: 0).map(\.name) == [device.name])
+    }
+
     @Test func aDeviceLeftOutOfOneListingIsKept() throws {
         let leased = try h.pool.acquire(AcquireRequest(holder: "agent-1"))
         let free = try h.pool.acquire(AcquireRequest())

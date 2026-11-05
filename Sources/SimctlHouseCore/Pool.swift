@@ -88,6 +88,15 @@ public struct DeviceHistory: Codable, Equatable, Sendable {
     }
 }
 
+/// A free device that `delete --unused` deleted, or would delete.
+public struct UnusedDevice: Codable, Equatable, Sendable {
+    public var name: String
+    public var udid: String?
+    public var lastUsedAt: Date
+    /// Disk space its simulator took, measured right before deleting it; nil if it could not be measured.
+    public var bytes: Int64?
+}
+
 public struct GCReport: Codable, Equatable, Sendable {
     public var reclaimed: [String] = []
     public var shutDown: [String] = []
@@ -343,9 +352,53 @@ public struct Pool: Sendable {
         return try delete(force: force) { state in Array(state.devices.indices) }
     }
 
+    /// Deletes free devices that nobody acquired, released or renewed for `age`, to get their disk space back (D32).
+    /// Leased and busy devices, and free ones another process uses, are skipped. `deleted` hears of each device as it goes;
+    /// with `dryRun` it hears of each one that would go, and nothing is touched.
+    @discardableResult
+    public func deleteUnused(age: TimeInterval, dryRun: Bool = false, deleted: (UnusedDevice) -> Void = { _ in }) throws -> [UnusedDevice] {
+        try collectGarbage()
+        let describe = { (device: PoolDevice) in
+            UnusedDevice(name: device.name, udid: device.udid, lastUsedAt: device.lastActivityAt, bytes: device.udid.flatMap(backend.diskUsage))
+        }
+        if dryRun {
+            let state = try store.snapshot()
+            let devices = unusedIndices(in: state, age: age).map { describe(state.devices[$0]) }
+            devices.forEach(deleted)
+            return devices
+        }
+        var measured: UnusedDevice?
+        var devices: [UnusedDevice] = []
+        _ = try delete(
+            force: false, select: { state in unusedIndices(in: state, age: age) },
+            // Measured once claimed, so outside the state lock, and before the simulator is gone.
+            prepare: { device in measured = describe(device) },
+            done: { _ in
+                guard let device = measured else { return }
+                devices.append(device)
+                deleted(device)
+            }, logs: false)
+        return devices
+    }
+
+    private func unusedIndices(in state: PoolState, age: TimeInterval) -> [Int] {
+        let now = now()
+        let old = state.devices.indices.filter { index in
+            let device = state.devices[index]
+            return device.status == .available && now.timeIntervalSince(device.lastActivityAt) >= age
+        }
+        let foreign = scanner.udidsInUse(among: old.compactMap { state.devices[$0].udid })
+        return old.filter { state.devices[$0].udid.map { !foreign.contains($0.uppercased()) } ?? true }
+    }
+
     /// `select` picks the devices inside the transaction that claims them, so what is deleted is what was selected.
     /// Every device is attempted; a failure hands that device back as it was, lease included, and is rethrown at the end.
-    private func delete(force: Bool, select: (PoolState) throws -> [Int]) throws -> [String] {
+    /// `prepare` runs for each claimed device right before it is deleted, and `done` once it is gone;
+    /// a caller that reports deletions itself passes `logs: false`.
+    private func delete(
+        force: Bool, select: (PoolState) throws -> [Int], prepare: (PoolDevice) -> Void = { _ in }, done: (PoolDevice) -> Void = { _ in },
+        logs: Bool = true
+    ) throws -> [String] {
         let targets = try store.transaction { state -> [(device: PoolDevice, claim: Claim)] in
             var seen: Set<Int> = []
             let indices = try select(state).filter { seen.insert($0).inserted }
@@ -361,8 +414,10 @@ public struct Pool: Sendable {
         var firstError: Error?
         for (device, claim) in targets {
             do {
+                prepare(device)
                 try destroy(device, claim: claim, reason: .deleted)
-                log("Deleted \(device.name).")
+                if logs { log("Deleted \(device.name).") }
+                done(device)
             } catch {
                 // If the simulator is gone after all, the next GC retires it as vanished.
                 log("Deleting \(device.name) failed; handing it back.")

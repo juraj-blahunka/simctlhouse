@@ -84,6 +84,7 @@ Every command that takes a device accepts its name or its UDID.
 - `simctlhouse create [--family ipad]` pre-provisions a free device.
 - `simctlhouse erase <name>` wipes a free device's contents and settings.
 - `simctlhouse delete <name>` deletes a device.
+  Do not run `simctlhouse delete --unused` or `delete --all` unless the user asks: other agents' devices are in the same pool, and freeing disk space is the user's call.
 - `simctlhouse gc` reclaims expired leases and shuts down every free booted device now.
 - `simctlhouse daemon status` shows whether the daemon runs; its log is `~/.simctlhouse/daemon.log`.
 - `simctlhouse skill status` shows where this skill is linked from; `skill install` and `skill uninstall` manage the links for the user.

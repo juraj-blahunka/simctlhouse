@@ -155,7 +155,7 @@ Each lease shows when it was acquired and when it ended, the `--holder` label, t
 | `released` | The holder released it |
 | `expired` | Not released or renewed within the lease length; the device was re-created under a new name |
 | `erased` | `erase --force` wiped it under the lease |
-| `deleted` | `delete --force` removed it |
+| `deleted` | `delete` removed it |
 | `vanished` | The simulator disappeared outside simctlhouse |
 | `failed` | Creating or booting it failed |
 | `abandoned` | The process creating it crashed |
@@ -177,6 +177,9 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 - A corrupt `state.json` is moved to `state.json.corrupt-<time>` and the pool starts empty, with a warning.
   The simulators it listed are no longer managed; delete them with `xcrun simctl delete <udid>`, taking the UDIDs from that file.
 - A `state.json` written by a newer simctlhouse makes every command fail with exit code 1; upgrade this one.
+- Get disk space back: a simulator that has booted takes about 2.4 GB, and the pool never shrinks on its own.
+  `simctlhouse delete --unused` deletes free devices nobody acquired, released or renewed for 7 days (`--for 2d`, `12h`, `30m`, or `0` for every free device) and reports what it freed.
+  Leased and busy devices, and free ones another process uses, are skipped; `--dry-run` shows what would go and touches nothing.
 - Start from scratch: `simctlhouse delete --all --force`.
 
 ## Exit codes
