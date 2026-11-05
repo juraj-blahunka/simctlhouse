@@ -12,6 +12,8 @@ public struct PoolConfig: Sendable {
     /// A `provisioning` / `maintenance` step is repaired as soon as the process running it is gone.
     /// One still running after this long is presumed hung and repaired too; its claim keeps it from acting afterwards.
     public var hungOperation: TimeInterval = 60 * 60
+    /// `delete` waits this long for a device that is `provisioning` or `maintenance`, such as one the daemon is shutting down.
+    public var busyWait: TimeInterval = 30
 
     public init() {}
 
@@ -123,6 +125,7 @@ public struct Pool: Sendable {
     let processID: Int32
     let now: @Sendable () -> Date
     let log: @Sendable (String) -> Void
+    let sleep: @Sendable (TimeInterval) -> Void
 
     public init(
         paths: HousePaths,
@@ -131,7 +134,8 @@ public struct Pool: Sendable {
         config: PoolConfig = PoolConfig(),
         processID: Int32 = getpid(),
         now: @escaping @Sendable () -> Date = { Date() },
-        log: @escaping @Sendable (String) -> Void = { _ in }
+        log: @escaping @Sendable (String) -> Void = { _ in },
+        sleep: @escaping @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     ) {
         self.store = StateStore(paths: paths, log: log)
         self.backend = backend
@@ -140,6 +144,7 @@ public struct Pool: Sendable {
         self.processID = processID
         self.now = now
         self.log = log
+        self.sleep = sleep
     }
 
     // MARK: - acquire / release / renew
@@ -435,18 +440,7 @@ public struct Pool: Sendable {
         force: Bool, select: (PoolState) throws -> [Int], prepare: (PoolDevice) -> Void = { _ in }, done: (PoolDevice) -> Void = { _ in },
         logs: Bool = true
     ) throws -> [String] {
-        let targets = try store.transaction { state -> [(device: PoolDevice, claim: Claim)] in
-            var seen: Set<Int> = []
-            let indices = try select(state).filter { seen.insert($0).inserted }
-            for index in indices { try ensureMutable(state.devices[index], force: force) }
-            let now = now()
-            return indices.map { index in
-                // The lease ends only once the device is gone, when `destroy` retires it.
-                let claim = newClaim()
-                state.devices[index].begin(.maintenance, claim: claim, at: now)
-                return (state.devices[index], claim)
-            }
-        }
+        let targets = try claimForDeletion(force: force, select: select)
         var firstError: Error?
         for (device, claim) in targets {
             do {
@@ -463,6 +457,37 @@ public struct Pool: Sendable {
         }
         if let firstError { throw firstError }
         return targets.map(\.device.name)
+    }
+
+    /// Claims the selected devices for deletion. A device that is `provisioning` or `maintenance` is mid-operation,
+    /// most often the daemon shutting down one that was just released, so this waits up to `config.busyWait` for it
+    /// instead of failing a `delete --all` that raced with it (D36).
+    private func claimForDeletion(force: Bool, select: (PoolState) throws -> [Int]) throws -> [(device: PoolDevice, claim: Claim)] {
+        let deadline = now().addingTimeInterval(config.busyWait)
+        var warned = false
+        while true {
+            do {
+                return try store.transaction { state -> [(device: PoolDevice, claim: Claim)] in
+                    var seen: Set<Int> = []
+                    let indices = try select(state).filter { seen.insert($0).inserted }
+                    for index in indices { try ensureMutable(state.devices[index], force: force) }
+                    let now = now()
+                    return indices.map { index in
+                        // The lease ends only once the device is gone, when `destroy` retires it.
+                        let claim = newClaim()
+                        state.devices[index].begin(.maintenance, claim: claim, at: now)
+                        return (state.devices[index], claim)
+                    }
+                }
+            } catch SimctlHouseError.deviceBusy(let device, let status) where now() < deadline {
+                if !warned {
+                    log("\(device) is busy (\(status.rawValue)); waiting up to \(Int(config.busyWait))s for it to finish.")
+                    warned = true
+                }
+                sleep(0.25)
+                try collectGarbage()
+            }
+        }
     }
 
     /// Wipes a device back to a pristine, shut down state with `simctl erase`. Keeps the name and the UDID.

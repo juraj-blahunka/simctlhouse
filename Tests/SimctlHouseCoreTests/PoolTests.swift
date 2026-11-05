@@ -314,6 +314,68 @@ import Testing
         #expect(h.backend.callCount(prefix: "delete") == 1)
     }
 
+    @Test func deleteAllWaitsForADeviceTheDaemonIsShuttingDown() throws {
+        let device = try h.pool.create(DeviceSpec())
+        let store = StateStore(paths: HousePaths(root: h.root))
+        try store.transaction { state in
+            state.devices[0].begin(.maintenance, claim: Claim(id: "daemon", pid: 4242, processStartedAt: nil), at: h.clock.now)
+        }
+        // The other process finishes its shutdown while delete waits.
+        let waiting = h.pool(sleep: { [unowned h] seconds in
+            h.clock.advance(minutes: seconds / 60)
+            _ = try? store.transaction { state in state.devices[0].restore(at: h.clock.now) }
+        })
+        #expect(try waiting.deleteAll(force: true) == [device.name])
+        #expect(try h.state().devices.isEmpty)
+    }
+
+    @Test func deleteGivesUpOnADeviceThatStaysBusy() throws {
+        let device = try h.pool.create(DeviceSpec())
+        try StateStore(paths: HousePaths(root: h.root)).transaction { state in
+            state.devices[0].begin(.maintenance, claim: Claim(id: "daemon", pid: 4242, processStartedAt: nil), at: h.clock.now)
+        }
+        #expect(throws: SimctlHouseError.deviceBusy(device: device.name, status: .maintenance)) { try h.pool.deleteAll(force: true) }
+        #expect(throws: SimctlHouseError.deviceBusy(device: device.name, status: .maintenance)) { try h.pool.delete([device.name], force: true) }
+        #expect(h.backend.callCount(prefix: "delete") == 0)
+    }
+
+    @Test func deleteWaitsOnlyOnceToTellAboutIt() throws {
+        _ = try h.pool.create(DeviceSpec())
+        try StateStore(paths: HousePaths(root: h.root)).transaction { state in
+            state.devices[0].begin(.maintenance, claim: Claim(id: "daemon", pid: 4242, processStartedAt: nil), at: h.clock.now)
+        }
+        let messages = Messages()
+        let waiting = Pool(
+            paths: HousePaths(root: h.root), backend: h.backend, scanner: h.scanner, now: { [clock = h.clock] in clock.now },
+            log: { messages.append($0) }, sleep: { [clock = h.clock] in clock.advance(minutes: $0 / 60) })
+        #expect(throws: SimctlHouseError.self) { try waiting.deleteAll(force: true) }
+        #expect(messages.all.filter { $0.contains("waiting up to 30s") }.count == 1)
+    }
+
+    @Test func deleteStopsWaitingOnceTheClaimingProcessIsGone() throws {
+        let device = try h.pool.create(DeviceSpec())
+        try StateStore(paths: HousePaths(root: h.root)).transaction { state in
+            state.devices[0].begin(.maintenance, claim: Claim(id: "daemon", pid: 4242, processStartedAt: nil), at: h.clock.now)
+        }
+        let waiting = h.pool(sleep: { [unowned h] _ in h.scanner.exit(4242) })
+        #expect(try waiting.deleteAll(force: true) == [device.name])
+        #expect(try h.state().devices.isEmpty)
+    }
+
+    @Test func deleteWithoutForceDoesNotTakeADeviceLeasedMeanwhile() throws {
+        let device = try h.pool.create(DeviceSpec())
+        let store = StateStore(paths: HousePaths(root: h.root))
+        try store.transaction { state in
+            state.devices[0].begin(.maintenance, claim: Claim(id: "daemon", pid: 4242, processStartedAt: nil), at: h.clock.now)
+        }
+        let waiting = h.pool(sleep: { [unowned h] _ in
+            _ = try? store.transaction { state in state.devices[0].restore(at: h.clock.now) }
+            _ = try? h.pool.acquire(AcquireRequest(device: device.name, holder: "agent-2"))
+        })
+        #expect(throws: SimctlHouseError.deviceLeased(device: device.name, holder: "agent-2")) { try waiting.deleteAll(force: false) }
+        #expect(h.backend.callCount(prefix: "delete") == 0)
+    }
+
     @Test func deleteAllRemovesEveryDevice() throws {
         _ = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         _ = try h.pool.create(DeviceSpec())

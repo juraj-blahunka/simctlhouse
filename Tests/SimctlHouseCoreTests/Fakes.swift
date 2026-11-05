@@ -182,9 +182,12 @@ final class Harness: Sendable {
     var pool: Pool { pool() }
 
     /// `processID` stands in for another simctlhouse process, which `scanner.exit` can make crash.
-    func pool(config: PoolConfig = PoolConfig(), processID: Int32 = getpid()) -> Pool {
+    /// By default a pool's sleep moves the test clock, so a wait that never ends fails instead of spinning.
+    func pool(config: PoolConfig = PoolConfig(), processID: Int32 = getpid(), sleep: (@Sendable (TimeInterval) -> Void)? = nil) -> Pool {
         let clock = clock
-        return Pool(paths: HousePaths(root: root), backend: backend, scanner: scanner, config: config, processID: processID, now: { clock.now })
+        let sleep = sleep ?? { clock.advance(minutes: $0 / 60) }
+        return Pool(
+            paths: HousePaths(root: root), backend: backend, scanner: scanner, config: config, processID: processID, now: { clock.now }, sleep: sleep)
     }
 
     func state() throws -> PoolState { try StateStore(paths: HousePaths(root: root)).snapshot() }

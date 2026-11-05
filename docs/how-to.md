@@ -232,6 +232,7 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
   `simctlhouse delete --unused` deletes free devices nobody acquired, released or renewed for 7 days (`--for 2d`, `12h`, `30m`, or `0` for every free device) and reports what it freed.
   Leased and busy devices, and free ones another process uses, are skipped; `--dry-run` shows what would go and touches nothing.
 - Start from scratch: `simctlhouse delete --all --force`.
+  A device the daemon is shutting down or another command is creating is waited for, up to 30 seconds, before `delete` fails with exit code 5.
 
 ## Exit codes
 
@@ -242,7 +243,7 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 | 2 | Unknown or unsupported model, or no runtime matches |
 | 3 | Device not found (never created by simctlhouse, deleted, or reclaimed after lease expiry) |
 | 4 | Lease ID mismatch, or `renew` of a device that is not leased |
-| 5 | Device is leased, busy, or used by another process (`acquire <name>`, `delete` / `erase` without `--force`), missing from simctl's device list for a moment (`acquire <name>`), or was taken over because the command ran for over an hour |
+| 5 | Device is leased, busy, or used by another process (`acquire <name>`, `erase` without `--force`, `delete` of a leased device without `--force`, or of a busy one still busy after waiting 30 seconds), missing from simctl's device list for a moment (`acquire <name>`), or was taken over because the command ran for over an hour |
 | 6 | `skill install` found no skill next to the binary, or something other than a simctlhouse link is in the way |
 | 64 | Invalid command-line usage, or an invalid `SIMCTLHOUSE_*_SECONDS` or `SIMCTLHOUSE_DAEMON` value |
 
