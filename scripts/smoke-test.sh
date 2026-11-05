@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs a release tarball end to end against real simulators, the way a user would after `brew install`:
 # link the skill, acquire a device without booting it, check the daemon, release it, delete the pool,
-# wrap a command in `run` (the one boot), let the daemon shut that device down, and check that no other simulator was touched.
+# wrap a command in `run` (the one boot), let the daemon shut that device down, run a missing command on that same device,
+# and check that no other simulator was touched and the number of simulators is unchanged.
 # Everything runs in throwaway directories (SIMCTLHOUSE_HOME and the skills directory), never in your own setup.
 set -euo pipefail
 
@@ -27,6 +28,9 @@ udids() { xcrun simctl list devices -j | sed -nE 's/.*"udid" : "([^"]+)".*/\1/p'
 daemon_running() { [[ "$("$bin" daemon status --json)" == *'"running" : true'* ]]; }
 daemon_pid() { "$bin" daemon status --json | sed -nE 's/.*"pid" : ([0-9]+).*/\1/p'; }
 shut_down() { xcrun simctl list devices | /usr/bin/grep -F "$1" | /usr/bin/grep -qF "(Shutdown)"; }
+# Counts the lines of $1 that are not empty, so an empty list counts as 0.
+count() { /usr/bin/grep -c . <<<"$1" || true; }
+pool_size() { count "$("$bin" list --json 2>/dev/null | /usr/bin/grep '"name" :')"; }
 kept_alive() { [[ "$("$bin" daemon status --json)" == *'"keepAliveUntil"'* ]]; }
 # Waits up to $1 seconds for the daemon to exit on its own.
 wait_for_daemon_exit() { for _ in $(seq $(($1 * 2))); do daemon_running && sleep 0.5 || return 0; done; ! daemon_running; }
@@ -59,7 +63,10 @@ step "Linking the skill"
     fail "skill status does not report the link as linked."
 [[ -f "$work/skills/simctlhouse/SKILL.md" ]] || fail "the linked skill has no SKILL.md."
 
+step "Counting simulators before the run"
 before="$(udids)"
+before_count="$(count "$before")"
+echo "$before_count simulators"
 
 step "Acquiring a device without booting it"
 udid="$("$bin" acquire --skip-boot --holder smoke-test)"
@@ -103,14 +110,21 @@ read -r run_udid run_arg <<<"$out"
 [[ -n "$run_udid" && "$run_udid" == "$run_arg" ]] || fail "run gave the command '$out' instead of its UDID twice."
 [[ -z "$("$bin" list leased 2>/dev/null)" ]] || fail "run left a device leased."
 "$bin" history "$run_udid" | /usr/bin/grep -q "released *smoke-run" || fail "history does not show the run's lease as released."
+
+step "Letting the daemon shut down the released device and stop on its own"
+# The daemon exits only once nothing is in progress, so the device is free again rather than mid-shutdown,
+# and the next run reuses it instead of creating another one.
+wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of the release."
+shut_down "$run_udid" || fail "the daemon stopped but left released device $run_udid booted."
+
+step "Running a missing command; run reuses the released device"
 status=0
 "$bin" run -- simctlhouse-smoke-no-such-command 2>/dev/null || status=$?
 [[ $status -eq 127 ]] || fail "run of a missing command exited with $status instead of 127."
-
-step "Letting the daemon shut down the released device and stop on its own"
-wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of the release."
-shut_down "$run_udid" || fail "the daemon stopped but left released device $run_udid booted."
+[[ "$(pool_size)" -eq 1 ]] || fail "run created another device instead of reusing $run_udid:"$'\n'"$("$bin" list 2>&1)"
+"$bin" history "$run_udid" | /usr/bin/grep -c "released" | /usr/bin/grep -qx 2 || fail "history does not show both runs on $run_udid."
 "$bin" delete --all --force
+wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of deleting the pool."
 
 step "Keeping a daemon alive with nothing to watch"
 "$bin" daemon start --keep-alive 0 2>/dev/null
@@ -129,7 +143,15 @@ wait
 
 # Every simulator that existed before must still exist. Other agents on this machine may delete their own devices
 # meanwhile; a failure lists the missing UDIDs so you can tell whether this run touched them.
-missing="$(comm -23 <(echo "$before") <(udids))"
+step "Counting simulators after the run"
+after="$(udids)"
+after_count="$(count "$after")"
+echo "$after_count simulators"
+missing="$(comm -23 <(echo "$before") <(echo "$after"))"
 [[ -z "$missing" ]] || fail "simulators that existed before the run are gone:"$'\n'"$missing"
+# Other agents on this machine may create simulators meanwhile; a failure lists the new UDIDs so you can tell.
+added="$(comm -13 <(echo "$before") <(echo "$after"))"
+[[ "$after_count" -eq "$before_count" ]] ||
+    fail "there are $after_count simulators after the run, $before_count before. New ones:"$'\n'"$added"
 
 step "Smoke test passed for simctlhouse $version"

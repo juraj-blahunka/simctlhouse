@@ -319,7 +319,7 @@ By hand:
 2. Run `scripts/release.sh 1.4.0`.
    It refuses to run if the version does not match, if the sources have uncommitted changes, or if tag `v1.4.0` exists elsewhere.
    It runs the tests and lint, builds and signs through `scripts/build.sh`, notarizes, checks that Apple published the notarization ticket, packs `dist/simctlhouse-1.4.0-macos.tar.gz`, installs that tarball into a temporary directory to check it, and writes `dist/simctlhouse.rb`.
-3. Run `scripts/smoke-test.sh dist/simctlhouse-1.4.0-macos.tar.gz`: in a throwaway home, the shipped binary acquires a real simulator without booting it, starts, stops and restarts the daemon, releases and deletes the device, runs a command on a booted device with `run`, and waits for the daemon to shut that device down and exit on its own; the script checks that no other simulator was touched.
+3. Run `scripts/smoke-test.sh dist/simctlhouse-1.4.0-macos.tar.gz`: in a throwaway home, the shipped binary acquires a real simulator without booting it, starts, stops and restarts the daemon, releases and deletes the device, runs a command on a booted device with `run`, waits for the daemon to shut that device down and exit on its own, and checks that a second `run` reuses it; the script checks that no other simulator was touched and that the number of simulators is the same before and after.
 4. Tag the commit `v1.4.0`, push it, and attach the tarball to a GitHub release of that tag.
 5. Copy `dist/simctlhouse.rb` to `Formula/simctlhouse.rb` in the tap and push.
    The tap's `tests` workflow then audits the formula, installs it on macOS 15 and 26 and runs its `test` block; wait for it to pass.
