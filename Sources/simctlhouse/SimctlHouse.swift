@@ -430,7 +430,10 @@ struct List: ParsableCommand {
     func run() throws {
         try Runtime.run { pool in
             if watch {
-                try ListWatch(pool: pool, filter: DeviceFilter(filters), filtered: !filters.isEmpty).run()
+                // Its own pool, whose messages go into the frame: written to the terminal, the next frame would erase them.
+                let messages = RecentMessages()
+                let watched = try Runtime.pool { message in messages.append(message) }
+                try ListWatch(pool: watched, messages: messages, filter: DeviceFilter(filters), filtered: !filters.isEmpty).run()
                 return
             }
             let devices = try pool.list(DeviceFilter(filters))
@@ -456,6 +459,8 @@ struct ListWatch {
     static let interval: TimeInterval = 1
 
     let pool: Pool
+    /// What the pool reported while collecting garbage, such as an idle shutdown, shown below the table.
+    let messages: RecentMessages
     let filter: DeviceFilter
     let filtered: Bool
 
@@ -477,7 +482,8 @@ struct ListWatch {
             handlers.forEach { $0.cancel() }
         }
         repeat {
-            write(Self.frame(lines: render(), at: Date()))
+            let lines = render()
+            write(Self.frame(lines: lines, messages: messages.recent, at: Date(), size: Self.terminalSize()))
         } while stop.wait(timeout: .now() + Self.interval) == .timedOut
     }
 
@@ -491,14 +497,46 @@ struct ListWatch {
         }
     }
 
-    /// Draws from the top left, clearing the rest of each line and everything below, so nothing flickers or lingers.
-    static func frame(lines: [String], at date: Date) -> String {
+    /// Draws from the top left, clearing each line before writing it and everything below, so nothing flickers or lingers.
+    /// Lines are cut to the terminal's size, as `watch` does: a wrapped or scrolled line would shift the whole frame.
+    static func frame(lines: [String], messages: [String] = [], at date: Date, size: (rows: Int, columns: Int)? = nil) -> String {
         let header = "Every \(Int(interval))s, \(Format.timestamp(date)). Press q to quit."
-        return "\u{1B}[H" + ([header, ""] + lines).map { $0 + "\u{1B}[K" }.joined(separator: "\n") + "\u{1B}[J"
+        var all = [header, ""] + lines + (messages.isEmpty ? [] : [""] + messages)
+        if let size { all = all.prefix(max(size.rows, 1)).map { String($0.prefix(max(size.columns, 1))) } }
+        return "\u{1B}[H" + all.map { "\u{1B}[K" + $0 }.joined(separator: "\n") + "\u{1B}[J"
+    }
+
+    static func terminalSize() -> (rows: Int, columns: Int)? {
+        var size = winsize()
+        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_row > 0, size.ws_col > 0 else { return nil }
+        return (Int(size.ws_row), Int(size.ws_col))
     }
 
     private func write(_ text: String) {
         FileHandle.standardOutput.write(Data(text.utf8))
+    }
+}
+
+/// The last few messages, with the time each was logged, from any thread.
+final class RecentMessages: @unchecked Sendable {
+    static let limit = 5
+
+    private let lock = NSLock()
+    private var messages: [String] = []
+    private let now: @Sendable () -> Date
+
+    init(now: @escaping @Sendable () -> Date = { Date() }) {
+        self.now = now
+    }
+
+    var recent: [String] { lock.withLock { messages } }
+
+    func append(_ message: String) {
+        let line = "\(Format.time(now()))  \(message)"
+        lock.withLock {
+            messages.append(line)
+            if messages.count > Self.limit { messages.removeFirst(messages.count - Self.limit) }
+        }
     }
 }
 
@@ -1055,6 +1093,15 @@ enum Format {
     }()
 
     static func timestamp(_ date: Date) -> String { timestampFormatter.string(from: date) }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    static func time(_ date: Date) -> String { timeFormatter.string(from: date) }
 
     static func path(_ path: String?) -> String {
         guard let path else { return "-" }
