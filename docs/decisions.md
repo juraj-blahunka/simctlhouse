@@ -357,11 +357,11 @@ If a device cannot be deleted, the state and the links stay, so running it again
 The state directory is removed under the state lock, and only once it lists no device, so a device that an agent acquired meanwhile is deleted too rather than left untracked.
 Trade-off: lease history and the daemon log go with the state directory.
 
-## D36. `delete` waits for a device that is mid-operation
+## D36. `delete` and `erase` wait for a device that is mid-operation
 
 The daemon shuts down a free device once its idle time is up, and the device is `maintenance` while it does.
-`delete --all --force` right after a release raced with that and failed with `busy (maintenance)`, which broke the smoke test and would break a script that cleans up after a run.
-`delete` now retries for up to 30 seconds (`PoolConfig.busyWait`) when a selected device is `provisioning` or `maintenance`, collecting garbage between attempts so a claim whose process died is repaired meanwhile, and fails with exit code 5 only if the device is still busy after that.
-`acquire <name>` and `erase` still fail at once, and `delete --unused` still skips busy devices, since none of them is asked to remove everything.
+`delete --all --force` right after a release raced with that and failed with `busy (maintenance)`, which broke the smoke test and would break a script that cleans up after a run; `erase` right after a release raced the same way.
+`delete` and `erase` now retry for up to 30 seconds (`PoolConfig.busyWait`) when a selected device is `provisioning` or `maintenance`, collecting garbage between attempts so a claim whose process died is repaired meanwhile, and fails with exit code 5 only if the device is still busy after that.
+`acquire <name>` still fails at once, since the agent can take any other device instead, and `delete --unused` still skips busy devices, since it only cleans up what is idle.
 The bound is not strict, since each garbage collection between attempts can itself take long when it has to re-create a device.
-Trade-off: a device that is hung in a long operation makes `delete` wait the full 30 seconds before it fails.
+Trade-off: a device that is hung in a long operation makes `delete` or `erase` wait the full 30 seconds before it fails.

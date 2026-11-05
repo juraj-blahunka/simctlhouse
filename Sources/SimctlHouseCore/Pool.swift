@@ -12,7 +12,7 @@ public struct PoolConfig: Sendable {
     /// A `provisioning` / `maintenance` step is repaired as soon as the process running it is gone.
     /// One still running after this long is presumed hung and repaired too; its claim keeps it from acting afterwards.
     public var hungOperation: TimeInterval = 60 * 60
-    /// `delete` waits this long for a device that is `provisioning` or `maintenance`, such as one the daemon is shutting down.
+    /// `delete` and `erase` wait this long for a device that is `provisioning` or `maintenance`, such as one the daemon is shutting down.
     public var busyWait: TimeInterval = 30
 
     public init() {}
@@ -459,26 +459,34 @@ public struct Pool: Sendable {
         return targets.map(\.device.name)
     }
 
-    /// Claims the selected devices for deletion. A device that is `provisioning` or `maintenance` is mid-operation,
-    /// most often the daemon shutting down one that was just released, so this waits up to `config.busyWait` for it
-    /// instead of failing a `delete --all` that raced with it (D36).
+    /// Claims the selected devices for deletion, waiting for any that is busy (D36).
     private func claimForDeletion(force: Bool, select: (PoolState) throws -> [Int]) throws -> [(device: PoolDevice, claim: Claim)] {
+        try waitingWhileBusy {
+            try store.transaction { state -> [(device: PoolDevice, claim: Claim)] in
+                var seen: Set<Int> = []
+                let indices = try select(state).filter { seen.insert($0).inserted }
+                for index in indices { try ensureMutable(state.devices[index], force: force) }
+                let now = now()
+                return indices.map { index in
+                    // The lease ends only once the device is gone, when `destroy` retires it.
+                    let claim = newClaim()
+                    state.devices[index].begin(.maintenance, claim: claim, at: now)
+                    return (state.devices[index], claim)
+                }
+            }
+        }
+    }
+
+    /// Runs `claim` again while it fails because a device is `provisioning` or `maintenance`, for up to `config.busyWait`.
+    /// Such a device is mid-operation, most often the daemon shutting down one that was just released, so `delete` or
+    /// `erase` right after a release waits for it instead of failing (D36). `claim` must take the state lock itself,
+    /// so the lock is never held while waiting; garbage collection between attempts repairs a claim whose process died.
+    private func waitingWhileBusy<T>(_ claim: () throws -> T) throws -> T {
         let deadline = now().addingTimeInterval(config.busyWait)
         var warned = false
         while true {
             do {
-                return try store.transaction { state -> [(device: PoolDevice, claim: Claim)] in
-                    var seen: Set<Int> = []
-                    let indices = try select(state).filter { seen.insert($0).inserted }
-                    for index in indices { try ensureMutable(state.devices[index], force: force) }
-                    let now = now()
-                    return indices.map { index in
-                        // The lease ends only once the device is gone, when `destroy` retires it.
-                        let claim = newClaim()
-                        state.devices[index].begin(.maintenance, claim: claim, at: now)
-                        return (state.devices[index], claim)
-                    }
-                }
+                return try claim()
             } catch SimctlHouseError.deviceBusy(let device, let status) where now() < deadline {
                 if !warned {
                     log("\(device) is busy (\(status.rawValue)); waiting up to \(Int(config.busyWait))s for it to finish.")
@@ -494,12 +502,14 @@ public struct Pool: Sendable {
     public func erase(_ ref: String, force: Bool) throws -> DeviceInfo {
         try collectGarbage()
         let claim = newClaim()
-        let device = try store.transaction { state -> PoolDevice in
-            guard let index = state.index(of: ref) else { throw SimctlHouseError.deviceNotFound(ref) }
-            try ensureMutable(state.devices[index], force: force)
-            // A forced erase ends the lease only once the wipe is done.
-            state.devices[index].begin(.maintenance, claim: claim, at: now())
-            return state.devices[index]
+        let device = try waitingWhileBusy {
+            try store.transaction { state -> PoolDevice in
+                guard let index = state.index(of: ref) else { throw SimctlHouseError.deviceNotFound(ref) }
+                try ensureMutable(state.devices[index], force: force)
+                // A forced erase ends the lease only once the wipe is done.
+                state.devices[index].begin(.maintenance, claim: claim, at: now())
+                return state.devices[index]
+            }
         }
         do {
             try backend.shutdown(udid: device.udid!)

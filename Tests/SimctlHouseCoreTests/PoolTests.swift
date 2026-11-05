@@ -339,6 +339,31 @@ import Testing
         #expect(h.backend.callCount(prefix: "delete") == 0)
     }
 
+    @Test func eraseWaitsForADeviceTheDaemonIsShuttingDown() throws {
+        let device = try h.pool.create(DeviceSpec())
+        let store = StateStore(paths: HousePaths(root: h.root))
+        try store.transaction { state in
+            state.devices[0].begin(.maintenance, claim: Claim(id: "daemon", pid: 4242, processStartedAt: nil), at: h.clock.now)
+        }
+        let waiting = h.pool(sleep: { [unowned h] seconds in
+            h.clock.advance(minutes: seconds / 60)
+            _ = try? store.transaction { state in state.devices[0].restore(at: h.clock.now) }
+        })
+        let erased = try waiting.erase(device.name, force: false)
+        #expect(erased.udid == device.udid)
+        #expect(erased.status == .available)
+        #expect(h.backend.callCount(prefix: "erase") == 1)
+    }
+
+    @Test func eraseGivesUpOnADeviceThatStaysBusy() throws {
+        let device = try h.pool.create(DeviceSpec())
+        try StateStore(paths: HousePaths(root: h.root)).transaction { state in
+            state.devices[0].begin(.maintenance, claim: Claim(id: "daemon", pid: 4242, processStartedAt: nil), at: h.clock.now)
+        }
+        #expect(throws: SimctlHouseError.deviceBusy(device: device.name, status: .maintenance)) { try h.pool.erase(device.name, force: true) }
+        #expect(h.backend.callCount(prefix: "erase") == 0)
+    }
+
     @Test func deleteWaitsOnlyOnceToTellAboutIt() throws {
         _ = try h.pool.create(DeviceSpec())
         try StateStore(paths: HousePaths(root: h.root)).transaction { state in
