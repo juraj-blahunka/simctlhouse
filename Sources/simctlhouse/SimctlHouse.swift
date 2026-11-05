@@ -25,7 +25,7 @@ struct SimctlHouse: ParsableCommand {
               SIMCTLHOUSE_HOME           state directory (default ~/.simctlhouse)
               SIMCTLHOUSE_DAEMON         0 to never start the daemon (default 1)
             """,
-        version: "0.1.0",
+        version: "0.1.1",
         subcommands: [
             Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self, DaemonCommand.self,
             Skill.self,
