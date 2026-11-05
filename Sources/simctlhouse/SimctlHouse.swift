@@ -754,7 +754,7 @@ struct DaemonCommand: ParsableCommand {
         commandName: "daemon",
         abstract: "Inspect or control the background daemon that enforces lease expiry and idle shutdown on time.",
         discussion: """
-            `acquire`, `release` and `renew` start the daemon when none runs, or when one of another simctlhouse build runs.
+            `acquire`, `release`, `renew` and `run` start the daemon when none runs, or when one of another simctlhouse build runs.
             It reclaims expired leases and shuts down idle free devices as they come due, and exits once nothing is leased, booted or in progress.
             Without it, every command still does the same work first.
             It logs to <home>/daemon.log. Set SIMCTLHOUSE_DAEMON=0 to never start it.
@@ -784,7 +784,7 @@ struct DaemonCommand: ParsableCommand {
         func run() throws {
             try Runtime.run { pool in
                 if keepAlive == 0, try !pool.hasWorkForDaemon() {
-                    Runtime.note("Not started: nothing is leased, booted or in progress. The next acquire, release or renew starts it.")
+                    Runtime.note("Not started: nothing is leased, booted or in progress. The next acquire, release, renew or run starts it.")
                     return
                 }
                 let launcher = DaemonLauncher(paths: HousePaths.fromEnvironment())
@@ -867,7 +867,7 @@ struct DaemonCommand: ParsableCommand {
                     let enabled = (try? DaemonLauncher.isEnabled()) ?? true
                     Runtime.note(
                         enabled
-                            ? "Not running. The next acquire, release or renew starts it."
+                            ? "Not running. The next acquire, release, renew or run starts it."
                             : "Not running. SIMCTLHOUSE_DAEMON=0 keeps commands from starting it.")
                     return
                 }
@@ -888,7 +888,7 @@ struct DaemonCommand: ParsableCommand {
 
     struct Stop: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Stop the daemon. The next acquire, release or renew starts it again; until then every command does its work."
+            abstract: "Stop the daemon. The next acquire, release, renew or run starts it again; until then every command does its work."
         )
 
         func run() throws {

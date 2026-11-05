@@ -32,8 +32,8 @@ When a single command does everything that needs the simulator, such as an end-t
 simctlhouse run --holder "fix login test" -- xcodebuild test -scheme App
 ```
 
-`run` leases and boots a free iPhone, adds `-destination id=<UDID>` to xcodebuild, and hands the device back to the pool, still booted for the next agent, as soon as the command exits.
-The lease lasts exactly as long as the command, so it cannot be forgotten or run out mid-test, and the device comes back even when the command fails, is interrupted or is killed.
+`run` leases and boots a free iPhone, adds `-destination id=<UDID>` to xcodebuild, and hands the device back to the pool as soon as the command exits.
+The lease lasts exactly as long as the command, so it cannot be forgotten or run out mid-test, and the device comes back even when the command fails, is interrupted or is killed (within a minute if simctlhouse itself is killed).
 
 ### Several steps on the same simulator
 
@@ -47,8 +47,6 @@ xcrun simctl launch "$UDID" com.example.app
 xcrun simctl io "$UDID" screenshot onboarding.png
 simctlhouse release "$UDID"                                      # back to the pool, still booted for the next agent
 ```
-
-A lease from `acquire` runs out after 30 minutes unless the agent renews it, so a forgotten release cannot hold a device forever.
 
 ### Who holds what
 
@@ -64,32 +62,14 @@ ready-lion     available  Shutdown  iPhone 18 Pro  27.2  -                      
 
 ## What it does
 
-- **Agent skill included.** [`skills/simctlhouse/SKILL.md`](skills/simctlhouse/SKILL.md) tells agents when to lease, how to use the UDID, when to renew, and to release when done, also after failures.
-  `brew upgrade` updates it together with the binary.
-- **Exclusive leases.** A device is handed to one agent at a time.
-- **Leases that cannot leak.** `simctlhouse run` wraps a command in a lease that lasts exactly as long as the command, released however it ends; if simctlhouse itself is killed, the device is reclaimed within a minute.
-- **Pooling.** Released devices are reused, still booted, by the next agent asking for the same model and OS.
-- **Plain simulators.** Devices are ordinary simulators made with `simctl create`, visible in Xcode.
-  A new device's first boot takes about 25s, a reused one is ready immediately.
-- **Automatic reclaim.** A lease not released or renewed within 30 minutes (configurable) ends: the device is re-created under a new name and returned to the pool, so a stale agent cannot reach it.
+- **Pooling.** A released device goes back to the pool still booted, and the next agent asking for the same model and OS gets it at once.
+  Devices are ordinary simulators made with `simctl create`, visible in Xcode; a new one's first boot takes about 25s.
+- **Leases that cannot leak.** A lease from `acquire` that is not released or renewed within 30 minutes (configurable) ends: the device is re-created under a new name, so a stale agent cannot reach it.
 - **Idle shutdown.** Free devices shut down after 15 minutes of inactivity (configurable), or right away with `simctlhouse gc`.
-  `list` shows when each free device shuts down.
-- **On time, without a service to install.** A small daemon starts on demand, does the cleanup when it is due, and exits once the pool is idle.
-- **Audit trail.** Each device remembers its last 5 holders with acquire and release times, and devices that left the pool stay queryable.
+- **No service to install.** The pool is one JSON file, `~/.simctlhouse/state.json`, that every command changes under a file lock.
+  A small daemon starts on demand to enforce the timeouts on time, and exits once the pool is idle.
+- **Audit trail.** `simctlhouse history` shows who held each device, when, and how each lease ended, also for devices that left the pool.
 - **Hands off your simulators.** simctlhouse only touches devices it created, and skips any device it sees another process using.
-
-## How it works
-
-The pool is one JSON file, `~/.simctlhouse/state.json`.
-Every command reads and changes it under a file lock, so agents running commands at the same time never step on each other; there is no server.
-Before doing its own work, every command does the housekeeping: it reclaims expired leases, shuts down devices that have been idle too long, and repairs anything a crashed command left half done.
-
-So that the housekeeping also happens when no command runs, `acquire`, `release`, `renew` and `run` start a background daemon if none is running.
-It sleeps until the next lease expires or a free device's idle time ends, does the housekeeping then, and wakes at once whenever a command changes the pool.
-It talks to no one; like the commands, it only reads and writes the state file.
-It exits on its own once nothing is leased, booted or in progress, and after an upgrade the next command replaces it with the new build.
-`simctlhouse daemon status` shows it.
-To test or watch it without leasing a device, `simctlhouse daemon start` keeps it running for 30 minutes even when the pool is idle (`--keep-alive SECONDS` to change that), and `simctlhouse daemon serve` does the same in the foreground.
 
 ## Commands
 

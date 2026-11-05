@@ -19,7 +19,7 @@ It then runs `simctlhouse skill install --source <checkout>/skills/simctlhouse`,
 `--skills-dir` (repeatable) replaces that detection with the directories you name.
 Because these are links, every project picks up the skill and edits in this repo take effect immediately.
 If something other than a simctlhouse skill link already sits at a link location, nothing is linked and the script stops rather than delete it.
-Re-running it is safe and is how you upgrade after pulling; the next `acquire`, `release` or `renew` replaces a running daemon with the new build.
+Re-running it is safe and is how you upgrade after pulling; the next `acquire`, `release`, `renew` or `run` replaces a running daemon with the new build.
 `--uninstall` removes the links with `simctlhouse skill uninstall` and stops the daemon before it removes the binary, and leaves the simulator pool alone; run `simctlhouse uninstall` first to remove that too.
 
 ### From a release
@@ -168,13 +168,13 @@ You do not need to manage it:
 - It sleeps until the next lease expires or a free device's idle time ends, cleans up then, and wakes at once when a command changes the pool.
   While a `run` holds a device, it also checks every minute that the `run` process is still alive.
 - It exits on its own once nothing is leased, booted or in progress; with the defaults, about 15 minutes after the last device is released.
-- After an upgrade, the next `acquire`, `release` or `renew` replaces it with the new build.
+- After an upgrade, the next `acquire`, `release`, `renew` or `run` replaces it with the new build.
 
 To look at it or control it:
 
 ```sh
 simctlhouse daemon status     # running or not, since when, pid, version, binary
-simctlhouse daemon stop       # stops it until the next acquire, release or renew
+simctlhouse daemon stop       # stops it until the next acquire, release, renew or run
 simctlhouse daemon start      # starts it now and keeps it running at least 30 minutes; with this command's timeouts
 tail "$(simctlhouse home)/daemon.log"
 simctlhouse home --open       # the state directory with the log, in Finder
