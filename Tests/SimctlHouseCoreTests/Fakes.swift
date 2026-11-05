@@ -18,6 +18,9 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     private(set) var calls: [String] = []
     var failBoot = false
     var failErase = false
+    var failCreate = false
+    /// `simctl list devices` fails, as while CoreSimulator is unavailable.
+    var failListing = false
     /// Names of devices whose deletion fails.
     var failDelete: Set<String> = []
     /// Run outside the backend's lock, to act as another process while a slow `simctl` call is in flight.
@@ -53,8 +56,9 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     }()
 
     func devices() throws -> [SimDevice] {
-        lock.withLock {
-            storage.values
+        try lock.withLock {
+            if failListing { throw SimctlHouseError.simctlFailed(command: "list devices", status: 1, stderr: "boom") }
+            return storage.values
                 .filter { !unlisted.contains($0.udid) }
                 .map { SimDevice(udid: $0.udid, name: $0.name, state: $0.state, deviceTypeIdentifier: $0.deviceType) }
         }
@@ -66,8 +70,9 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
 
     func create(name: String, deviceType: String, runtime: String) throws -> String {
         onCreate?()
-        return lock.withLock {
+        return try lock.withLock {
             calls.append("create \(name)")
+            if failCreate { throw SimctlHouseError.simctlFailed(command: "create", status: 1, stderr: "boom") }
             let udid = UUID().uuidString
             storage[udid] = Device(udid: udid, name: name, state: "Shutdown", deviceType: deviceType, runtime: runtime)
             return udid
@@ -137,6 +142,9 @@ final class FakeBackend: SimulatorBackend, @unchecked Sendable {
     }
 
     func setState(_ udid: String, _ state: String) { lock.withLock { storage[udid]?.state = state } }
+
+    /// As after the runtime was deleted with `xcrun simctl runtime delete`.
+    func uninstallRuntime(_ identifier: String) { lock.withLock { runtimeList.removeAll { $0.identifier == identifier } } }
 
     func callCount(prefix: String) -> Int { lock.withLock { calls.filter { $0.hasPrefix(prefix) }.count } }
 }

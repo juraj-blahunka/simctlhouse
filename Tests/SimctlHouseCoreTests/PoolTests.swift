@@ -115,6 +115,38 @@ import Testing
         #expect(throws: SimctlHouseError.deviceNotFound(device.udid!)) { try h.pool.renew(device.udid!) }
     }
 
+    @Test func anExpiredDeviceWhoseRuntimeWasUninstalledLeavesThePool() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        h.backend.uninstallRuntime(try #require(try h.state().devices.first).runtimeIdentifier)
+        h.clock.advance(minutes: 31)
+        #expect(try h.pool.collectGarbage().reclaimed == [device.name])
+        #expect(try h.state().devices.isEmpty)
+        #expect(h.backend.device(device.udid) == nil)
+        #expect(h.backend.callCount(prefix: "create") == 1)
+        #expect(try h.state().retired.map(\.reason) == [.expired, .runtimeRemoved])
+    }
+
+    @Test func aReclaimWhoseCreateFailsLeavesNoRecordOrSimulator() throws {
+        let device = try h.pool.acquire(AcquireRequest())
+        h.backend.failCreate = true
+        h.clock.advance(minutes: 31)
+        #expect(try h.pool.collectGarbage().reclaimed == [device.name])
+        #expect(try h.state().devices.isEmpty)
+        #expect(try h.backend.devices().isEmpty)
+        #expect(try h.state().retired.map(\.reason) == [.expired, .failed])
+    }
+
+    @Test func aFailedCreateFailsTheAcquireAndRecordsTheLease() throws {
+        h.backend.failCreate = true
+        #expect(throws: SimctlHouseError.simctlFailed(command: "create", status: 1, stderr: "boom")) {
+            try h.pool.acquire(AcquireRequest(holder: "agent-1"))
+        }
+        #expect(try h.state().devices.isEmpty)
+        let retired = try #require(try h.state().retired.last)
+        #expect(retired.reason == .failed)
+        #expect(retired.history.map(\.holder) == ["agent-1"])
+    }
+
     @Test func leaseStartsOnceTheDeviceHasBooted() throws {
         h.backend.onBoot = { [unowned h] in
             h.backend.onBoot = nil
@@ -662,6 +694,20 @@ import Testing
         }
         #expect(throws: SimctlHouseError.takenOver(device: device.name)) { try crashing.erase(device.name, force: false) }
         #expect(try h.state().devices.map(\.status) == [.available])
+    }
+
+    @Test func workOfACrashedProcessOnAVanishedSimulatorRetiresIt() throws {
+        let device = try h.pool.create(DeviceSpec())
+        let crashing = h.pool(processID: 4242)
+        h.backend.onErase = { [unowned h] in
+            h.backend.onErase = nil
+            h.backend.removeBehindOurBack(device.udid!)
+            h.scanner.exit(4242)
+            #expect((try? h.pool.collectGarbage())?.forgotten == [device.name])
+        }
+        #expect(throws: SimctlHouseError.takenOver(device: device.name)) { try crashing.erase(device.name, force: false) }
+        #expect(try h.state().devices.isEmpty)
+        #expect(try h.state().retired.last?.reason == .vanished)
     }
 
     @Test func recoversFromAbandonedProvisioning() throws {

@@ -172,6 +172,44 @@ import Testing
         #expect(h.clock.now >= device.expiresAt!)
     }
 
+    @Test func aFailedCollectionIsRetriedAtThePoll() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        h.backend.failListing = true
+        let sleeps = Locked<[TimeInterval]>([])
+        let daemon = Daemon(
+            pool: h.pool, version: "test", build: build, signals: DaemonSignals(),
+            sleep: { [unowned h] seconds in
+                sleeps.mutate { $0.append(seconds) }
+                h.backend.failListing = false
+                h.clock.advance(minutes: seconds / 60)
+            })
+        #expect(try daemon.serve() == .idle)
+        #expect(sleeps.value.first == Daemon.pollInterval)
+        #expect(try h.state().retired.last?.name == device.name)
+    }
+
+    @Test func stopSignalsTheDaemonAndWaitsForItToExit() throws {
+        let held = try holdLock(build: build)
+        let launcher = DaemonLauncher(
+            paths: HousePaths(root: h.root), build: build, scanner: h.scanner, spawn: { _ in 0 },
+            signal: { pid in
+                #expect(pid == 4242)
+                // Exits a moment later, once its collection is done.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { held.release() }
+            })
+        #expect(try launcher.stop(timeout: 10))
+        #expect(try !launcher.status().running)
+        #expect(try launcher.stop(timeout: 0))
+    }
+
+    @Test func stopGivesUpOnADaemonThatDoesNotExit() throws {
+        let held = try holdLock(build: build)
+        let signalled = Counter()
+        #expect(try !launcher(Counter(), signalled).stop(timeout: 0.2))
+        #expect(signalled.value == 1)
+        held.release()
+    }
+
     @Test func onlyOneDaemonRuns() throws {
         _ = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         let record = DaemonRecord(pid: 4242, processStartedAt: nil, startedAt: h.clock.now, version: "other", build: build)
