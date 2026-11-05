@@ -143,6 +143,28 @@ import Testing
         #expect(h.clock.now == started.addingTimeInterval(20 * 60))
     }
 
+    @Test func aDaemonKeptAliveNoticesAKilledRunWithinItsPoll() throws {
+        let woken = Counter()
+        let exitAt = h.clock.now.addingTimeInterval(5 * 60)
+        let daemon = Daemon(
+            pool: h.pool, version: "test", build: build, signals: DaemonSignals(),
+            sleep: { [unowned h] seconds in
+                woken.increment()
+                guard woken.value > 1 else {
+                    // Waiting out its keep-alive, the daemon is woken by a `run` taking a lease.
+                    h.clock.advance(minutes: 1 / 60)
+                    _ = try? h.pool.acquire(AcquireRequest(spec: DeviceSpec(), owner: 4242))
+                    return
+                }
+                h.clock.advance(minutes: seconds / 60)
+                if h.clock.now >= exitAt { h.scanner.exit(4242) }
+            })
+        #expect(try daemon.serve(keepAlive: 30 * 60) == .idle)
+        let retired = try #require(try h.state().retired.last)
+        #expect(retired.reason == .abandoned)
+        #expect(retired.retiredAt.timeIntervalSince(exitAt) <= Daemon.pollInterval)
+    }
+
     @Test func workOutlastingTheKeepAliveKeepsTheDaemonLonger() throws {
         let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         #expect(try daemon().serve(keepAlive: 5 * 60) == .idle)

@@ -250,7 +250,9 @@ public struct Daemon: Sendable {
                     return wake
                 }
                 if let wake {
-                    nextCollection = min(nextCollection, wake)
+                    // Waiting out a keep-alive moved the next collection past the poll; work brings the poll back,
+                    // so a crashed claim or a killed `run` is still noticed within it.
+                    nextCollection = min(nextCollection, wake, (lastCollection ?? pool.now()).addingTimeInterval(Self.pollInterval))
                     waitingOutKeepAlive = false
                 } else if let keepAliveUntil {
                     // Nothing can come due, so there is nothing to collect before the keep-alive ends or a command wakes it.
