@@ -126,7 +126,8 @@ To look at it or control it:
 simctlhouse daemon status     # running or not, since when, pid, version, binary
 simctlhouse daemon stop       # stops it until the next acquire, release or renew
 simctlhouse daemon start      # starts it now and keeps it running at least 30 minutes; with this command's timeouts
-tail ~/.simctlhouse/daemon.log
+tail "$(simctlhouse home)/daemon.log"
+simctlhouse home --open       # the state directory with the log, in Finder
 ```
 
 `daemon start --keep-alive SECONDS` sets how long it keeps running even with nothing to watch (default 1800); after that it exits once the pool is idle, as usual.

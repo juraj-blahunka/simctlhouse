@@ -28,7 +28,7 @@ struct SimctlHouse: ParsableCommand {
         version: "0.1.1",
         subcommands: [
             Acquire.self, Release.self, Renew.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self, DaemonCommand.self,
-            Skill.self,
+            Home.self, Skill.self,
         ]
     )
 }
@@ -204,6 +204,39 @@ struct UDID: ParsableCommand {
 
     func run() throws {
         try Runtime.run { pool in print(try pool.udid(of: device)) }
+    }
+}
+
+struct Home: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Print the state directory, or open it in Finder.",
+        discussion: """
+            It holds state.json, the daemon's log and the locks: ~/.simctlhouse, or $SIMCTLHOUSE_HOME.
+            For scripts: `tail "$(simctlhouse home)/daemon.log"`.
+            """
+    )
+
+    @Flag(name: .long, help: "Open it in Finder.")
+    var open = false
+
+    func run() throws {
+        try Runtime.run {
+            let root = HousePaths.fromEnvironment().root
+            print(root.path)
+            guard open else { return }
+            // Nothing has run here yet; an empty directory beats an error.
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let finder = Process()
+            finder.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            finder.arguments = [root.path]
+            do {
+                try finder.run()
+                finder.waitUntilExit()
+            } catch {
+                throw SimctlHouseError.io("Cannot open \(root.path) in Finder: \(error.localizedDescription)")
+            }
+            guard finder.terminationStatus == 0 else { throw SimctlHouseError.io("Cannot open \(root.path) in Finder.") }
+        }
     }
 }
 
