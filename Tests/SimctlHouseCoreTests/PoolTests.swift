@@ -162,6 +162,27 @@ import Testing
         #expect(h.backend.device(device.udid)?.state == "Shutdown")
     }
 
+    @Test func aFreeBootedDeviceShowsWhenItShutsDown() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        #expect(device.shutdownAt == nil)
+        h.clock.advance(minutes: 5)
+        let released = try h.pool.release(device.name)
+        #expect(released.shutdownAt == h.clock.now.addingTimeInterval(15 * 60))
+        h.clock.advance(minutes: 15)
+        try h.pool.collectGarbage()
+        let shutDown = try #require(try h.pool.list().first)
+        #expect(shutDown.state == "Shutdown")
+        #expect(shutDown.shutdownAt == nil)
+    }
+
+    @Test func foreignUsePostponesTheShutdown() throws {
+        let device = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        try h.pool.release(device.name)
+        h.scanner.set(["xcrun simctl install \(device.udid!) App.app"])
+        h.clock.advance(minutes: 20)
+        #expect(try h.pool.list().first?.shutdownAt == h.clock.now.addingTimeInterval(15 * 60))
+    }
+
     @Test func configuredTimeoutsApply() throws {
         let config = try PoolConfig.fromEnvironment(["SIMCTLHOUSE_LEASE_SECONDS": "120", "SIMCTLHOUSE_IDLE_SECONDS": "0"])
         let pool = h.pool(config: config)

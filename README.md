@@ -28,6 +28,16 @@ xcodebuild test -scheme App -destination "id=$UDID"
 simctlhouse release "$UDID"                             # back to the pool, still booted for the next agent
 ```
 
+`simctlhouse list` shows who holds what, and what happens next (UDIDs shortened here):
+
+```
+NAME           STATUS     STATE     MODEL          OS    HOLDER          NEXT             UDID
+amber-falcon   leased     Booted    iPhone 18 Pro  27.2  fix login test  expires in 28m   6F1C...
+wild-dragon    leased     Booted    iPhone 18 Pro  27.2  snapshot tests  expires in 11m   A93E...
+plucky-papaya  available  Booted    iPhone 18 Pro  27.2  -               shutdown in 12m  0B7D...
+ready-lion     available  Shutdown  iPhone 18 Pro  27.2  -               -                D42A...
+```
+
 Every command takes a device name or UDID, prints machine-readable output on stdout (`--json` for structured data), sends everything human to stderr, and reports failures as stable [exit codes](docs/how-to.md#exit-codes), so agents and scripts can act on them.
 
 ## What it does
@@ -40,6 +50,7 @@ Every command takes a device name or UDID, prints machine-readable output on std
   A new device's first boot takes about 25s, a reused one is ready immediately.
 - **Automatic reclaim.** A lease not released or renewed within 30 minutes (configurable) ends: the device is re-created under a new name and returned to the pool, so a stale agent cannot reach it.
 - **Idle shutdown.** Free devices shut down after 15 minutes of inactivity (configurable), or right away with `simctlhouse gc`.
+  `list` shows when each free device shuts down.
 - **On time, without a service to install.** A small daemon starts on demand, does the cleanup when it is due, and exits once the pool is idle.
 - **Audit trail.** Each device remembers its last 5 holders with acquire and release times, and devices that left the pool stay queryable.
 - **Hands off your simulators.** simctlhouse only touches devices it created, and skips any device it sees another process using.

@@ -164,7 +164,7 @@ struct Release: ParsableCommand {
     func run() throws {
         try Runtime.runStartingDaemon { pool in
             let info = try pool.release(device, leaseId: leaseId)
-            if output.json { try Runtime.printJSON(info) } else { Runtime.note("Released \(info.name).") }
+            if output.json { try Runtime.printJSON(info) } else { Runtime.note(Format.released(info, idleShutdown: pool.config.idleShutdown)) }
         }
     }
 }
@@ -644,7 +644,7 @@ enum Format {
     }
 
     static func table(_ devices: [DeviceInfo]) -> String {
-        let header = ["NAME", "STATUS", "STATE", "MODEL", "OS", "HOLDER", "EXPIRES", "UDID"]
+        let header = ["NAME", "STATUS", "STATE", "MODEL", "OS", "HOLDER", "NEXT", "UDID"]
         let rows = devices.map { device in
             [
                 device.name,
@@ -653,11 +653,35 @@ enum Format {
                 device.model,
                 device.os,
                 device.holder ?? "-",
-                device.status == .leased ? minutes(until: device.expiresAt) : "-",
+                next(device),
                 device.udid ?? "-",
             ]
         }
         return columns([header] + rows)
+    }
+
+    /// What the daemon does to the device next, and when: a lease expiring, or a free device shutting down.
+    static func next(_ device: DeviceInfo) -> String {
+        if device.status == .leased, let expiresAt = device.expiresAt {
+            let left = minutes(until: expiresAt)
+            return left == "expired" ? "expired" : "expires in \(left)"
+        }
+        if let shutdownAt = device.shutdownAt {
+            let left = minutes(until: shutdownAt)
+            return left == "expired" ? "shutdown due" : "shutdown in \(left)"
+        }
+        return "-"
+    }
+
+    /// Tells whoever released the device how long it stays warm for the next agent.
+    /// A device released just now shows the full idle time, for the same reason as `leaseLength`;
+    /// one that was already free (release is idempotent) counts down to its stored shutdown time.
+    static func released(_ device: DeviceInfo, idleShutdown: TimeInterval) -> String {
+        guard let shutdownAt = device.shutdownAt else { return "Released \(device.name)." }
+        let interval = shutdownAt.timeIntervalSinceNow
+        let left = remaining(idleShutdown - interval < 2 ? idleShutdown : interval)
+        if left == "expired" { return "Released \(device.name). It shuts down now." }
+        return "Released \(device.name). It stays booted for \(left) for the next agent."
     }
 
     static func skillTable(_ links: [SkillLink]) -> String {

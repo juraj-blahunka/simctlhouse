@@ -49,6 +49,7 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
 - `acquire`, `release` and `renew` start a background daemon (`simctlhouse daemon serve`) that enforces lease expiry and idle shutdown on time, and exits on its own once the pool is idle.
   Leave it alone: do not stop, kill or start it, and do not set `SIMCTLHOUSE_DAEMON`.
 - Released devices stay booted for the next agent until they have been idle for 15 minutes, and are not erased.
+  `release` and `list` say when a free device shuts down (`shutdownAt` in `--json`).
   If you need a pristine device, release it and run `simctlhouse erase <name>`, then acquire again; or uninstall your app first.
 - Never `xcrun simctl shutdown/erase/delete` a device yourself, and never touch simulators simctlhouse did not give you.
 - For retry-safe scripts, use `--json` and pass the lease ID back:
@@ -74,7 +75,7 @@ Always lease a device from simctlhouse, use it only through its UDID, and releas
 
 Every command that takes a device accepts its name or its UDID.
 
-- `simctlhouse list` shows devices, their status, holder and time left (`--json` available).
+- `simctlhouse list` shows devices, their status, holder, and what happens next: when a lease expires or a free device shuts down (`--json` available).
   Filter like `simctl list devices`: `list booted`, `list available`, or a search term such as a name, UDID or holder.
 - `simctlhouse udid <name>` prints the UDID of a device you know by name.
 - `simctlhouse history [<name|udid>]` shows who held a device, when, and how each lease ended (released, expired, vanished, ...).

@@ -64,6 +64,9 @@ public struct DeviceInfo: Codable, Equatable, Sendable {
     public var acquiredAt: Date?
     public var expiresAt: Date?
     public var lastActivityAt: Date
+    /// When idle shutdown is due for a free, booted device; nil otherwise.
+    /// An estimate that only moves later: use outside the pool, such as a run from Xcode, postpones it.
+    public var shutdownAt: Date? = nil
 }
 
 /// A device's audit trail, returned by `history`. Covers devices in the pool and devices that left it.
@@ -751,18 +754,21 @@ public struct Pool: Sendable {
     }
 
     private func describe(_ device: PoolDevice, live: [String: SimDevice], catalog: Catalog) -> DeviceInfo {
-        DeviceInfo(
+        let simulator = device.udid.flatMap { live[$0] }
+        let idle = device.status == .available && simulator?.isBooted == true
+        return DeviceInfo(
             name: device.name,
             udid: device.udid,
             status: device.status,
-            state: device.udid.flatMap { live[$0]?.state } ?? "Missing",
+            state: simulator?.state ?? "Missing",
             model: modelName(device.deviceTypeIdentifier, catalog: catalog),
             os: osVersion(device.runtimeIdentifier, catalog: catalog),
             holder: device.lease?.holder,
             leaseId: device.lease?.id,
             acquiredAt: device.lease?.acquiredAt,
             expiresAt: device.lease?.expiresAt,
-            lastActivityAt: device.lastActivityAt
+            lastActivityAt: device.lastActivityAt,
+            shutdownAt: idle ? device.lastActivityAt.addingTimeInterval(config.idleShutdown) : nil
         )
     }
 

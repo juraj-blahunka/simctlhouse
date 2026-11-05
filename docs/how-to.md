@@ -159,7 +159,8 @@ A device that leaves the pool (deleted, vanished, or renamed after an expired le
 
 ## Inspect and repair
 
-- `simctlhouse list` shows every owned device with status, boot state, holder and time left.
+- `simctlhouse list` shows every owned device with status, boot state, holder, and in `NEXT` when its lease expires or, for a free booted device, when it shuts down.
+  In `--json` these are `expiresAt` and `shutdownAt`.
   Filter it like `simctl list devices`: `list booted`, `list leased`, `list shutdown available`, or search terms such as `list "iPhone 17"` or `list <holder>`.
 - `simctlhouse history <name|udid>` shows who held a device and how each lease ended.
 - `simctlhouse daemon status` and `~/.simctlhouse/daemon.log` show what the daemon did.
