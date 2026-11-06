@@ -33,7 +33,7 @@ The lease lasts as long as the command, so there is nothing to renew.
 
 - Device options are those of `acquire` (below): `--family`, `--model`, `--os`, or a device name or UDID.
 - `--count N` leases N devices; xcodebuild then tests on all of them at once (add `-parallelize-tests-among-destinations` to split the tests instead).
-  Other commands read `$SIMCTLHOUSE_UDID_0` to `$SIMCTLHOUSE_UDID_<N-1>`, or the comma-separated `$SIMCTLHOUSE_UDIDS`.
+  Other commands name each device with `{udid0}` to `{udid<N-1>}` (`{udid}` is refused then), or read `$SIMCTLHOUSE_UDID_0` to `$SIMCTLHOUSE_UDID_<N-1>`.
 - `--timeout SECONDS` stops the command after that long, with exit code 124.
 - stdout is the command's own; simctlhouse's messages go to stderr, prefixed with `simctlhouse:`.
 - If your shell tool times out sooner than the command may take, run it in the background rather than under that timeout.

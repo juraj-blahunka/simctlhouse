@@ -41,7 +41,7 @@ Any other command gets the device through `{udid}` and `{name}` in its arguments
 simctlhouse run -- axe tap --label Continue --udid {udid}
 ```
 
-With `--count N`, it reads each device from `$SIMCTLHOUSE_UDID_0` to `$SIMCTLHOUSE_UDID_<N-1>`.
+With `--count N`, it names each device with `{udid0}` to `{udid<N-1>}`, or reads `$SIMCTLHOUSE_UDID_0` to `$SIMCTLHOUSE_UDID_<N-1>`.
 
 ### Several steps on the same simulator
 

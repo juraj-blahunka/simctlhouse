@@ -110,11 +110,11 @@ How the others are read:
 
 `simctlhouse run` (`Runner`) leases devices, runs one command on them, and releases them when it exits (D33, D34).
 
-1. Check the command: placeholders with `--count`, and an xcodebuild `-destination` that no lease could match, are refused before anything is leased (`RunCommand.check`).
+1. Check the command: a placeholder for a device the run will not lease (`{udid}` with `--count`, `{udid2}` with `--count 2`), and an xcodebuild `-destination` that no lease could match, are refused before anything is leased (`RunCommand.check`).
 2. Acquire `--count` devices at the same time, each as `acquire` does, with the lease's `owner` set to this process.
    If one fails, release the others.
 3. Make sure the daemon runs.
-4. Fill in the devices (`RunCommand`): replace `{udid}` and `{name}`, add `-destination id=<UDID>` per device to a direct xcodebuild, and refuse a `-destination` naming another simulator.
+4. Fill in the devices (`RunCommand`): replace `{udid}`, `{name}`, `{udid<i>}` and `{name<i>}`, add `-destination id=<UDID>` per device to a direct xcodebuild, and refuse a `-destination` naming another simulator.
 5. Install the signal handlers, then start the command with `posix_spawnp`: in simctlhouse's process group, with its stdin, stdout and stderr, no other descriptor, and default signal handling.
 6. Wait in a loop on one inbox (`RunEvents`) fed by a thread blocked in `waitpid`, the signal handlers (through a pipe, the only thing a handler can safely do), and a watcher on the state directory:
    - A signal is forwarded to the command, unless the terminal sent it to the whole foreground process group (Ctrl-C), which the command then received itself.

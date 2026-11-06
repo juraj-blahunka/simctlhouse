@@ -67,6 +67,10 @@ import Testing
         #expect(throws: SimctlHouseError.self) { try RunCommand.check(["xcodebuild", "test", "-destination", "id=booted"], count: 1) }
         #expect(throws: SimctlHouseError.self) { try RunCommand.check(["echo", "{udid}"], count: 2) }
         #expect(throws: SimctlHouseError.self) { try RunCommand.check([], count: 1) }
+        #expect(throws: SimctlHouseError.self) { try RunCommand.check(["echo", "{udid1}"], count: 1) }
+        #expect(throws: SimctlHouseError.self) { try RunCommand.check(["xcodebuild", "test", "-destination", "id={udid2}"], count: 2) }
+        try RunCommand.check(["echo", "{udid0}", "{name1}"], count: 2)
+        try RunCommand.check(["xcodebuild", "test", "-destination", "id={udid0}", "-destination", "id={udid1}"], count: 2)
         // Decided once the device is known.
         try RunCommand.check(["xcodebuild", "test", "-destination", "id=6F1C0000-0000-0000-0000-000000000001"], count: 1)
         try RunCommand.check(["xcodebuild", "test", "-destination", "id={udid}"], count: 1)
@@ -78,6 +82,35 @@ import Testing
     @Test func placeholdersNeedASingleDevice() {
         #expect(throws: SimctlHouseError.self) { try RunCommand(["xcrun", "simctl", "boot", "{udid}"], devices: two) }
         #expect(throws: SimctlHouseError.self) { try RunCommand(["echo", "{name}"], devices: two) }
+    }
+
+    @Test func indexedPlaceholdersNameEachDevice() throws {
+        let command = try RunCommand(["sh", "-c", "axe tap --udid {udid1} && echo {name0},{name1}"], devices: two)
+        #expect(command.arguments == ["sh", "-c", "axe tap --udid \(two[1].udid) && echo amber-falcon,wild-dragon"])
+        // A script reads the same name whether it got one device or several.
+        let single = try RunCommand(["echo", "{udid0}", "{name0}"], devices: one)
+        #expect(single.arguments == ["echo", one[0].udid, "amber-falcon"])
+    }
+
+    @Test func refusesAPlaceholderForADeviceNotLeased() {
+        #expect(throws: SimctlHouseError.self) { try RunCommand(["echo", "{udid2}"], devices: two) }
+        #expect(throws: SimctlHouseError.self) { try RunCommand(["echo", "{name1}"], devices: one) }
+        #expect(throws: SimctlHouseError.self) { try RunCommand(["echo", "{udid99999999999999999999}"], devices: two) }
+    }
+
+    @Test func leavesOtherBracesAlone() throws {
+        let arguments = ["echo", "{udids}", "{UDID}", "{udid-1}", "{}", "{model}"]
+        #expect(try RunCommand(arguments, devices: two).arguments == arguments)
+    }
+
+    @Test func xcodebuildDestinationsMayNameDevicesByIndex() throws {
+        let command = try RunCommand(["xcodebuild", "test", "-destination", "id={udid0}", "-destination", "id={udid1}"], devices: two)
+        #expect(command.addedDestinations.isEmpty)
+        #expect(command.arguments.filter { $0.hasPrefix("id=") } == two.map { "id=\($0.udid)" })
+        // A placeholder outside -destination leaves the injection on.
+        let bundle = try RunCommand(["xcodebuild", "test", "-resultBundlePath", "out/{name}.xcresult"], devices: one)
+        #expect(bundle.arguments.contains("out/amber-falcon.xcresult"))
+        #expect(bundle.addedDestinations == ["id=\(one[0].udid)"])
     }
 
     @Test func refusesAnEmptyCommand() {

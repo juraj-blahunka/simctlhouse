@@ -15,9 +15,10 @@ public struct RunDevice: Equatable, Sendable {
 
 /// Turns the command given to `simctlhouse run` into the one it starts, with the leased devices filled in.
 ///
-/// `{udid}` and `{name}` are replaced in every argument. A direct `xcodebuild` (or `xcrun xcodebuild`) without a
-/// `-destination` gets one `-destination id=<UDID>` per device; one whose `-destination` names another simulator is
-/// refused, because that is how agents end up on a device someone else holds (D34).
+/// `{udid}` and `{name}`, and `{udid<i>}` and `{name<i>}` for device `i`, are replaced in every argument (D38).
+/// A direct `xcodebuild` (or `xcrun xcodebuild`) without a `-destination` gets one `-destination id=<UDID>` per device;
+/// one whose `-destination` names another simulator is refused, because that is how agents end up on a device
+/// someone else holds (D34).
 public struct RunCommand: Equatable, Sendable {
     public static let udidPlaceholder = "{udid}"
     public static let namePlaceholder = "{name}"
@@ -39,15 +40,7 @@ public struct RunCommand: Equatable, Sendable {
 
     public init(_ command: [String], devices: [RunDevice]) throws {
         guard !command.isEmpty, !command[0].isEmpty else { throw SimctlHouseError.invalidRunCommand("Pass the command to run after --.") }
-        var arguments = command
-        if devices.count == 1 {
-            arguments = arguments.map {
-                $0.replacingOccurrences(of: Self.udidPlaceholder, with: devices[0].udid).replacingOccurrences(of: Self.namePlaceholder, with: devices[0].name)
-            }
-        } else if arguments.contains(where: { $0.contains(Self.udidPlaceholder) || $0.contains(Self.namePlaceholder) }) {
-            throw SimctlHouseError.invalidRunCommand(
-                "\(Self.udidPlaceholder) and \(Self.namePlaceholder) stand for one device; with --count, read $\(RunEnvironment.udids) instead.")
-        }
+        var arguments = try Self.substitute(command, devices: devices)
         self.addedDestinations = []
         if let tool = Self.xcodebuildIndex(arguments) {
             let added = try Self.destinations(for: Array(arguments[(tool + 1)...]), devices: devices)
@@ -57,21 +50,50 @@ public struct RunCommand: Equatable, Sendable {
         self.arguments = arguments
     }
 
-    /// Refuses, before any device is leased, a command that no lease could make valid: placeholders with several
-    /// devices, or an xcodebuild `-destination` that is not generic and names neither `{udid}` nor any UDID.
+    /// Refuses, before any device is leased, a command that no lease could make valid: a placeholder for a device
+    /// the run does not lease, or an xcodebuild `-destination` that is not generic and names no placeholder or UDID.
     /// A destination with a literal UDID can only be checked against the leased device, by `init`.
     public static func check(_ command: [String], count: Int) throws {
-        let placeholder = RunDevice(name: namePlaceholder, udid: udidPlaceholder, leaseId: "")
-        let probe = Array(repeating: placeholder, count: max(count, 1))
         guard !command.isEmpty, !command[0].isEmpty else { throw SimctlHouseError.invalidRunCommand("Pass the command to run after --.") }
-        guard let tool = xcodebuildIndex(command) else {
-            if count > 1 { _ = try RunCommand(command, devices: probe) }
-            return
-        }
-        let mentionsUDID = command.contains { $0.range(of: udidPattern, options: .regularExpression) != nil }
+        // Every device stands in as `{udid}`, which a destination check accepts like the leased UDID.
+        let probe = Array(repeating: RunDevice(name: namePlaceholder, udid: udidPlaceholder, leaseId: ""), count: max(count, 1))
+        let arguments = try substitute(command, devices: probe)
+        guard let tool = xcodebuildIndex(arguments) else { return }
+        let mentionsUDID = arguments.contains { $0.range(of: udidPattern, options: .regularExpression) != nil }
         if mentionsUDID { return }
-        _ = try destinations(for: Array(command[(tool + 1)...]), devices: probe)
-        if count > 1 { _ = try RunCommand(command, devices: probe) }
+        _ = try destinations(for: Array(arguments[(tool + 1)...]), devices: probe)
+    }
+
+    /// `arguments` with the placeholders replaced. `{udid}` and `{name}` stand for the only device, and are refused
+    /// with several so a command written for one device fails instead of using the first; `{udid<i>}` and `{name<i>}`
+    /// name device `i`, counting from 0.
+    static func substitute(_ arguments: [String], devices: [RunDevice]) throws -> [String] {
+        let placeholder = #/\{(?<field>udid|name)(?<index>\d*)\}/#
+        return try arguments.map { argument in
+            try argument.replacing(placeholder) { match in
+                let field = String(match.output.field)
+                let device: RunDevice
+                if match.output.index.isEmpty {
+                    guard devices.count == 1 else {
+                        throw SimctlHouseError.invalidRunCommand(
+                            "{\(field)} stands for one device, and this run leases \(devices.count); "
+                                + "name each with {\(field)0} to {\(field)\(devices.count - 1)}.")
+                    }
+                    device = devices[0]
+                } else {
+                    guard let index = Int(match.output.index), devices.indices.contains(index) else {
+                        let available =
+                            devices.count == 1
+                            ? "one device, so use {\(field)} or {\(field)0}"
+                            : "\(devices.count) devices, so use {\(field)0} to {\(field)\(devices.count - 1)}"
+                        throw SimctlHouseError.invalidRunCommand(
+                            "\(match.output.0) names no device: this run leases \(available), or raise --count to lease more.")
+                    }
+                    device = devices[index]
+                }
+                return field == "udid" ? device.udid : device.name
+            }
+        }
     }
 
     static let udidPattern = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"

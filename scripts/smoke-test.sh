@@ -2,6 +2,7 @@
 # Runs a release tarball end to end against real simulators, the way a user would after `brew install`:
 # link the skill, acquire a device without booting it, check the daemon, release it, delete the pool,
 # wrap a command in `run` (the one boot), let the daemon shut that device down, run a missing command on that same device,
+# refuse a placeholder for a device run would not lease,
 # and check that no other simulator was touched and the number of simulators is unchanged.
 # Everything runs in throwaway directories (SIMCTLHOUSE_HOME and the skills directory), never in your own setup.
 set -euo pipefail
@@ -105,11 +106,12 @@ step "Deleting it"
 step "Running a command on a leased device with run (creates and boots one; about 30 seconds)"
 status=0
 out="$("$bin" run --holder smoke-run -- sh -c \
-    'echo "$SIMCTLHOUSE_UDID $SIMCTLHOUSE_UDID_0 $SIMCTLHOUSE_UDIDS {udid} $SIMCTLHOUSE_DEVICE_NAME {name}"; exit 7')" || status=$?
+    'echo "$SIMCTLHOUSE_UDID $SIMCTLHOUSE_UDID_0 $SIMCTLHOUSE_UDIDS {udid} {udid0} $SIMCTLHOUSE_DEVICE_NAME {name}"; exit 7')" ||
+    status=$?
 [[ $status -eq 7 ]] || fail "run did not pass the command's exit code 7 through (got $status)."
-read -r run_udid run_udid0 run_udids run_arg run_name run_name_arg <<<"$out"
-[[ -n "$run_udid" && "$run_udid" == "$run_udid0" && "$run_udid" == "$run_udids" && "$run_udid" == "$run_arg" ]] ||
-    fail "run gave the command '$out' instead of its UDID four times."
+read -r run_udid run_udid0 run_udids run_arg run_arg0 run_name run_name_arg <<<"$out"
+[[ -n "$run_udid" && "$run_udid" == "$run_udid0" && "$run_udid" == "$run_udids" && "$run_udid" == "$run_arg" && "$run_udid" == "$run_arg0" ]] ||
+    fail "run gave the command '$out' instead of its UDID five times."
 [[ -n "$run_name" && "$run_name" == "$run_name_arg" ]] || fail "run gave the command '$out' instead of its name twice."
 [[ -z "$("$bin" list leased 2>/dev/null)" ]] || fail "run left a device leased."
 "$bin" history "$run_udid" | /usr/bin/grep -q "released *smoke-run" || fail "history does not show the run's lease as released."
@@ -126,6 +128,12 @@ status=0
 [[ $status -eq 127 ]] || fail "run of a missing command exited with $status instead of 127."
 [[ "$(pool_size)" -eq 1 ]] || fail "run created another device instead of reusing $run_udid:"$'\n'"$("$bin" list 2>&1)"
 "$bin" history "$run_udid" | /usr/bin/grep -c "released" | /usr/bin/grep -qx 2 || fail "history does not show both runs on $run_udid."
+
+step "Refusing a placeholder for a device run would not lease, before leasing one"
+status=0
+"$bin" run -- echo {udid1} 2>/dev/null || status=$?
+[[ $status -eq 125 ]] || fail "run with {udid1} for one device exited with $status instead of 125."
+"$bin" history "$run_udid" | /usr/bin/grep -c "released" | /usr/bin/grep -qx 2 || fail "run leased $run_udid for a command it refused."
 "$bin" delete --all --force
 wait_for_daemon_exit 30 || fail "the daemon did not stop on its own within 30 seconds of deleting the pool."
 

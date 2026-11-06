@@ -228,8 +228,10 @@ struct Run: ParsableCommand {
             xcodebuild run directly gets -destination id=<UDID> added; a -destination naming another simulator is \
             refused. Elsewhere, {udid} and {name} in the command are replaced, and the command sees \
             $SIMCTLHOUSE_UDID, $SIMCTLHOUSE_DEVICE_NAME and $SIMCTLHOUSE_LEASE_ID. With --count N, xcodebuild gets one -destination per device (it tests on all of them at once), \
-            and other commands read $SIMCTLHOUSE_UDID_0 to _N-1 (likewise _DEVICE_NAME_ and _LEASE_ID_), or the \
-            comma-separated $SIMCTLHOUSE_UDIDS and $SIMCTLHOUSE_DEVICE_NAMES.
+            and other commands name each device with {udid0} to {udidN-1} and {name0} to {nameN-1}, or read \
+            $SIMCTLHOUSE_UDID_0 to _N-1 (likewise _DEVICE_NAME_ and _LEASE_ID_) or the comma-separated \
+            $SIMCTLHOUSE_UDIDS and $SIMCTLHOUSE_DEVICE_NAMES. A placeholder for a device the run does not lease, \
+            or {udid} with several, is refused before anything is leased.
 
             The lease lasts as long as the command: no renew needed. The devices are released however the command \
             ends, also on failure, Ctrl-C or SIGTERM (forwarded to the command, which is killed if it has not exited \

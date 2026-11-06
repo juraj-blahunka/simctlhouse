@@ -337,7 +337,7 @@ Agents then cannot get the destination wrong, which `-destination 'name=iPhone .
 A `-destination` that is not generic and does not name the leased UDID is refused with 125 rather than warned about: an agent ignores a warning, and the fix is to delete the option.
 It is refused before leasing when no lease could make it valid, so no boot is wasted.
 Other tools take the device in arguments whose place depends on the subcommand, so they get `{udid}` and `{name}` placeholders and `SIMCTLHOUSE_UDID`, `SIMCTLHOUSE_DEVICE_NAME` and `SIMCTLHOUSE_LEASE_ID` instead of guessing (D38 extends this).
-With `--count`, only the lists `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICE_NAMES` are set and the placeholders are refused, so a script written for one device fails loudly instead of using the first.
+With `--count`, the singular variables are not set and `{udid}` and `{name}` are refused, so a script written for one device fails loudly instead of using the first.
 
 `run` is for one self-contained command, typically an end-to-end test run, and the docs and skill present it only that way.
 Steps that must share a device, such as build, install, launch and screenshot, hold it across commands with `acquire` and `release`, like a lock: two `run`s may get two devices, and chaining the steps into one `run` with `sh -c` hides that they depend on one device.
@@ -383,7 +383,10 @@ Setting `IDB_UDID` for idb and ios-simulator-mcp was considered and dropped: ios
 A second name for the UDID would add nothing but one more variable to keep in sync.
 
 With `--count N`, each device also gets indexed variables, `SIMCTLHOUSE_UDID_<i>`, `SIMCTLHOUSE_DEVICE_NAME_<i>` and `SIMCTLHOUSE_LEASE_ID_<i>` for `i` from 0, set for a single device too so a script reads the same name either way.
+The placeholders follow suit: `{udid<i>}` and `{name<i>}` name device `i`, while `{udid}` and `{name}` stay refused with several devices.
 Naming a device explicitly by index is the opposite of using the first by accident, so it does not weaken D34.
+A placeholder for a device the run does not lease, such as `{udid2}` with `--count 2`, is refused before anything is leased, so no boot is wasted.
+Only a `-destination` the command passes itself stops xcodebuild from getting one added; a placeholder elsewhere does not, since `-resultBundlePath out/{name}.xcresult` still needs the destination.
 Every variable `run` owns is cleared before it sets its own, so a `run` inside another `run` never sees the outer one's devices.
 
 0.3 renamed `SIMCTLHOUSE_DEVICE` to `SIMCTLHOUSE_DEVICE_NAME` and `SIMCTLHOUSE_DEVICES` to `SIMCTLHOUSE_DEVICE_NAMES`, and the lists became comma-separated instead of space-separated.

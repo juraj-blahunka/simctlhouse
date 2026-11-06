@@ -97,14 +97,18 @@ The device is released however the command ends:
 How the command gets the device:
 
 - xcodebuild run directly (or through `xcrun`) gets `-destination id=<UDID>` added, unless it is listing or archiving (`-list`, `-showBuildSettings`, `archive`, ...).
-  A `-destination` naming another simulator is refused with exit code 125 before any device is leased; one naming the leased UDID or a `generic/` destination is kept.
+  A `-destination` naming another simulator is refused with exit code 125 before any device is leased; one naming the leased UDID (or `{udid}`) or a `generic/` destination is kept, and then none is added.
+  Placeholders elsewhere leave the added `-destination` alone: `simctlhouse run -- xcodebuild test -resultBundlePath out/{name}.xcresult`.
 - `{udid}` and `{name}` in any argument are replaced: `simctlhouse run -- ./scripts/ui-tests.sh {udid}`.
 - The command's environment has `SIMCTLHOUSE_UDID`, `SIMCTLHOUSE_DEVICE_NAME` and `SIMCTLHOUSE_LEASE_ID`.
 - Tools that take the simulator as a flag get it through a placeholder, such as `simctlhouse run -- axe tap --label Continue --udid {udid}`.
 
 `--count N` leases N devices at once, for xcodebuild to test on several simulators in parallel: it adds one `-destination` per device and runs the whole suite on each, or splits the test classes among them with `-parallelize-tests-among-destinations`.
-Other commands read `SIMCTLHOUSE_UDID_0` to `SIMCTLHOUSE_UDID_<N-1>` (likewise `SIMCTLHOUSE_DEVICE_NAME_<i>` and `SIMCTLHOUSE_LEASE_ID_<i>`), or the comma-separated lists `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICE_NAMES`.
-With more than one device, `{udid}`, `{name}`, and the unindexed variables are not available, so a command written for one device fails instead of quietly using the first.
+Other commands name each device with `{udid0}` to `{udid<N-1>}` and `{name0}` to `{name<N-1>}`: `simctlhouse run --count 2 -- ./scripts/pair-test.sh {udid0} {udid1}`.
+They can also read `SIMCTLHOUSE_UDID_0` to `SIMCTLHOUSE_UDID_<N-1>` (likewise `SIMCTLHOUSE_DEVICE_NAME_<i>` and `SIMCTLHOUSE_LEASE_ID_<i>`), or the comma-separated lists `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICE_NAMES`.
+The indexed placeholders and variables work for a single device too, as index 0.
+With more than one device, `{udid}`, `{name}` and the unindexed variables are not available, so a command written for one device fails instead of quietly using the first.
+A placeholder for a device the run does not lease, such as `{udid2}` with `--count 2`, is refused with exit code 125 before any device is leased.
 
 stdout belongs to the command; simctlhouse writes only to stderr, prefixed with `simctlhouse:`.
 The command runs in simctlhouse's process group with its stdin, stdout and stderr, so pipes, colours and Ctrl-C work as they would without simctlhouse.
