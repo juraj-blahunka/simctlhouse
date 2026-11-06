@@ -13,7 +13,7 @@ scripts/lint.sh                     # swift format lint --strict; must be clean,
 scripts/install.sh                  # build release + install binary + link skill into detected agents (see --help)
 scripts/build.sh OUTPUT             # the release binary: arm64, stripped, signed (install.sh and release.sh use it)
 scripts/release.sh <version>        # signed, notarized release tarball + Homebrew formula in dist/ (see --help)
-scripts/smoke-test.sh TARBALL       # run a release tarball against real simulators in a throwaway home
+scripts/smoke-test.sh TARBALL [TEST...]  # run a release tarball through scripts/smoke/*.sh against real simulators in a throwaway home
 ```
 
 ## Layout
