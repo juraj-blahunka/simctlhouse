@@ -99,10 +99,12 @@ How the command gets the device:
 - xcodebuild run directly (or through `xcrun`) gets `-destination id=<UDID>` added, unless it is listing or archiving (`-list`, `-showBuildSettings`, `archive`, ...).
   A `-destination` naming another simulator is refused with exit code 125 before any device is leased; one naming the leased UDID or a `generic/` destination is kept.
 - `{udid}` and `{name}` in any argument are replaced: `simctlhouse run -- ./scripts/ui-tests.sh {udid}`.
-- The command's environment has `SIMCTLHOUSE_UDID`, `SIMCTLHOUSE_DEVICE` and `SIMCTLHOUSE_LEASE_ID`.
+- The command's environment has `SIMCTLHOUSE_UDID`, `SIMCTLHOUSE_DEVICE_NAME` and `SIMCTLHOUSE_LEASE_ID`.
+- Tools that take the simulator as a flag get it through a placeholder, such as `simctlhouse run -- axe tap --label Continue --udid {udid}`.
 
 `--count N` leases N devices at once, for xcodebuild to test on several simulators in parallel: it adds one `-destination` per device and runs the whole suite on each, or splits the test classes among them with `-parallelize-tests-among-destinations`.
-Other commands read the space-separated `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICES`; with more than one device, `{udid}`, `{name}` and the singular variables are not available.
+Other commands read `SIMCTLHOUSE_UDID_0` to `SIMCTLHOUSE_UDID_<N-1>` (likewise `SIMCTLHOUSE_DEVICE_NAME_<i>` and `SIMCTLHOUSE_LEASE_ID_<i>`), or the comma-separated lists `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICE_NAMES`.
+With more than one device, `{udid}`, `{name}`, and the unindexed variables are not available, so a command written for one device fails instead of quietly using the first.
 
 stdout belongs to the command; simctlhouse writes only to stderr, prefixed with `simctlhouse:`.
 The command runs in simctlhouse's process group with its stdin, stdout and stderr, so pipes, colours and Ctrl-C work as they would without simctlhouse.

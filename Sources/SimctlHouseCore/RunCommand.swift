@@ -118,18 +118,33 @@ public struct RunCommand: Equatable, Sendable {
 /// The variables `simctlhouse run` sets for its command.
 public enum RunEnvironment {
     public static let udid = "SIMCTLHOUSE_UDID"
-    public static let name = "SIMCTLHOUSE_DEVICE"
+    public static let name = "SIMCTLHOUSE_DEVICE_NAME"
     public static let leaseId = "SIMCTLHOUSE_LEASE_ID"
     public static let udids = "SIMCTLHOUSE_UDIDS"
-    public static let names = "SIMCTLHOUSE_DEVICES"
+    public static let names = "SIMCTLHOUSE_DEVICE_NAMES"
+    /// Separates the devices in `udids` and `names`. Neither UDIDs nor generated names contain it.
+    public static let separator = ","
+
+    /// The variable for device `index`, such as `SIMCTLHOUSE_UDID_0`.
+    public static func indexed(_ variable: String, _ index: Int) -> String { "\(variable)_\(index)" }
 
     /// `environment` with the devices added. The singular variables are set only for a single device,
     /// so a script written for one device fails loudly under `--count` instead of silently using the first.
+    /// Every variable `run` owns is cleared first: one inherited from an outer `run` would point at a device
+    /// this run does not hold.
     public static func adding(_ devices: [RunDevice], to environment: [String: String]) -> [String: String] {
-        var environment = environment
-        for variable in [udid, name, leaseId] { environment[variable] = nil }
-        environment[udids] = devices.map(\.udid).joined(separator: " ")
-        environment[names] = devices.map(\.name).joined(separator: " ")
+        let owned: Set = [udid, name, leaseId, udids, names]
+        let indexedPrefixes = [udid, name, leaseId].map { $0 + "_" }
+        var environment = environment.filter { key, _ in
+            !owned.contains(key) && !indexedPrefixes.contains { key.hasPrefix($0) && Int(key.dropFirst($0.count)) != nil }
+        }
+        environment[udids] = devices.map(\.udid).joined(separator: separator)
+        environment[names] = devices.map(\.name).joined(separator: separator)
+        for (index, device) in devices.enumerated() {
+            environment[indexed(udid, index)] = device.udid
+            environment[indexed(name, index)] = device.name
+            environment[indexed(leaseId, index)] = device.leaseId
+        }
         if devices.count == 1 {
             environment[udid] = devices[0].udid
             environment[name] = devices[0].name

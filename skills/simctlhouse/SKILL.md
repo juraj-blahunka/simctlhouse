@@ -25,7 +25,7 @@ The lease lasts as long as the command, so there is nothing to renew.
 - xcodebuild gets `-destination id=<UDID>` added.
   Do not pass a simulator `-destination` yourself: one naming another simulator (`name=...`, `booted`) is refused with exit code 125.
   `generic/platform=iOS Simulator` is fine.
-- Any other command gets the device through `{udid}` and `{name}` in its arguments, or `$SIMCTLHOUSE_UDID` and `$SIMCTLHOUSE_DEVICE`:
+- Any other command gets the device through `{udid}` and `{name}` in its arguments, or `$SIMCTLHOUSE_UDID` and `$SIMCTLHOUSE_DEVICE_NAME`:
 
   ```sh
   simctlhouse run -- ./scripts/ui-tests.sh {udid}
@@ -33,7 +33,7 @@ The lease lasts as long as the command, so there is nothing to renew.
 
 - Device options are those of `acquire` (below): `--family`, `--model`, `--os`, or a device name or UDID.
 - `--count N` leases N devices; xcodebuild then tests on all of them at once (add `-parallelize-tests-among-destinations` to split the tests instead).
-  Other commands read the space-separated `$SIMCTLHOUSE_UDIDS`.
+  Other commands read `$SIMCTLHOUSE_UDID_0` to `$SIMCTLHOUSE_UDID_<N-1>`, or the comma-separated `$SIMCTLHOUSE_UDIDS`.
 - `--timeout SECONDS` stops the command after that long, with exit code 124.
 - stdout is the command's own; simctlhouse's messages go to stderr, prefixed with `simctlhouse:`.
 - If your shell tool times out sooner than the command may take, run it in the background rather than under that timeout.

@@ -104,10 +104,13 @@ step "Deleting it"
 
 step "Running a command on a leased device with run (creates and boots one; about 30 seconds)"
 status=0
-out="$("$bin" run --holder smoke-run -- sh -c 'echo "$SIMCTLHOUSE_UDID {udid}"; exit 7')" || status=$?
+out="$("$bin" run --holder smoke-run -- sh -c \
+    'echo "$SIMCTLHOUSE_UDID $SIMCTLHOUSE_UDID_0 $SIMCTLHOUSE_UDIDS {udid} $SIMCTLHOUSE_DEVICE_NAME {name}"; exit 7')" || status=$?
 [[ $status -eq 7 ]] || fail "run did not pass the command's exit code 7 through (got $status)."
-read -r run_udid run_arg <<<"$out"
-[[ -n "$run_udid" && "$run_udid" == "$run_arg" ]] || fail "run gave the command '$out' instead of its UDID twice."
+read -r run_udid run_udid0 run_udids run_arg run_name run_name_arg <<<"$out"
+[[ -n "$run_udid" && "$run_udid" == "$run_udid0" && "$run_udid" == "$run_udids" && "$run_udid" == "$run_arg" ]] ||
+    fail "run gave the command '$out' instead of its UDID four times."
+[[ -n "$run_name" && "$run_name" == "$run_name_arg" ]] || fail "run gave the command '$out' instead of its name twice."
 [[ -z "$("$bin" list leased 2>/dev/null)" ]] || fail "run left a device leased."
 "$bin" history "$run_udid" | /usr/bin/grep -q "released *smoke-run" || fail "history does not show the run's lease as released."
 

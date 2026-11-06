@@ -336,8 +336,8 @@ A direct `xcodebuild` (or `xcrun xcodebuild`) gets `-destination id=<UDID>` adde
 Agents then cannot get the destination wrong, which `-destination 'name=iPhone ...'` and `booted` do all the time, and which is the collision simctlhouse exists to prevent.
 A `-destination` that is not generic and does not name the leased UDID is refused with 125 rather than warned about: an agent ignores a warning, and the fix is to delete the option.
 It is refused before leasing when no lease could make it valid, so no boot is wasted.
-Other tools take the device in arguments whose place depends on the subcommand, so they get `{udid}` and `{name}` placeholders and `SIMCTLHOUSE_UDID`, `SIMCTLHOUSE_DEVICE` and `SIMCTLHOUSE_LEASE_ID` instead of guessing.
-With `--count`, only the lists `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICES` are set and the placeholders are refused, so a script written for one device fails loudly instead of using the first.
+Other tools take the device in arguments whose place depends on the subcommand, so they get `{udid}` and `{name}` placeholders and `SIMCTLHOUSE_UDID`, `SIMCTLHOUSE_DEVICE_NAME` and `SIMCTLHOUSE_LEASE_ID` instead of guessing (D38 extends this).
+With `--count`, only the lists `SIMCTLHOUSE_UDIDS` and `SIMCTLHOUSE_DEVICE_NAMES` are set and the placeholders are refused, so a script written for one device fails loudly instead of using the first.
 
 `run` is for one self-contained command, typically an end-to-end test run, and the docs and skill present it only that way.
 Steps that must share a device, such as build, install, launch and screenshot, hold it across commands with `acquire` and `release`, like a lock: two `run`s may get two devices, and chaining the steps into one `run` with `sh -c` hides that they depend on one device.
@@ -374,3 +374,18 @@ It still prefers a booted device, like a plain `acquire`, so it never leaves a b
 The lease starts once the device exists, as after a boot.
 `run` always boots, since it hands the device to a command that usually needs it running.
 Trade-off: a command that does need a running simulator fails or boots it itself; the device stays in the pool either way, and the daemon shuts it down once it is free and idle.
+
+## D38. `run` hands the device to any tool, not only xcodebuild
+
+Tools other than xcodebuild take their simulator as a flag, such as AXe's `--udid`, and `run` fills those in with the placeholders of D34.
+`run` sets only its own `SIMCTLHOUSE_` variables, not ones named after other tools.
+Setting `IDB_UDID` for idb and ios-simulator-mcp was considered and dropped: ios-simulator-mcp is an MCP server the agent starts, so `run` never reaches it, and idb run under `run` takes `--udid {udid}` like any other tool.
+A second name for the UDID would add nothing but one more variable to keep in sync.
+
+With `--count N`, each device also gets indexed variables, `SIMCTLHOUSE_UDID_<i>`, `SIMCTLHOUSE_DEVICE_NAME_<i>` and `SIMCTLHOUSE_LEASE_ID_<i>` for `i` from 0, set for a single device too so a script reads the same name either way.
+Naming a device explicitly by index is the opposite of using the first by accident, so it does not weaken D34.
+Every variable `run` owns is cleared before it sets its own, so a `run` inside another `run` never sees the outer one's devices.
+
+0.3 renamed `SIMCTLHOUSE_DEVICE` to `SIMCTLHOUSE_DEVICE_NAME` and `SIMCTLHOUSE_DEVICES` to `SIMCTLHOUSE_DEVICE_NAMES`, and the lists became comma-separated instead of space-separated.
+`DEVICE` alone read like the device's identifier, and a comma-separated list splits the same way in every language, where a space-separated one relies on shell word splitting.
+Trade-off: scripts written for 0.2 that read the old names or split on spaces break; the old names were not kept as aliases, since two names for one value stay forever.

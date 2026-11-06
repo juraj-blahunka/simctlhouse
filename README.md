@@ -35,6 +35,14 @@ simctlhouse run --holder "fix login test" -- xcodebuild test -scheme App
 `run` leases and boots a free iPhone, adds `-destination id=<UDID>` to xcodebuild, and hands the device back to the pool as soon as the command exits.
 The lease lasts exactly as long as the command, so it cannot be forgotten or run out mid-test, and the device comes back even when the command fails, is interrupted or is killed (within a minute if simctlhouse itself is killed).
 
+Any other command gets the device through `{udid}` and `{name}` in its arguments, or `$SIMCTLHOUSE_UDID` and `$SIMCTLHOUSE_DEVICE_NAME` in its environment:
+
+```sh
+simctlhouse run -- axe tap --label Continue --udid {udid}
+```
+
+With `--count N`, it reads each device from `$SIMCTLHOUSE_UDID_0` to `$SIMCTLHOUSE_UDID_<N-1>`.
+
 ### Several steps on the same simulator
 
 Installing an app, launching it, taking a screenshot and trying again all have to happen on the same device.

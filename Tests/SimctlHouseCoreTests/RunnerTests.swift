@@ -112,7 +112,10 @@ final class FakeSignals: RunSignals, @unchecked Sendable {
         #expect(Set(devices.map(\.status)) == [.available])
         let arguments = try #require(launcher.started.first?.arguments)
         for device in devices { #expect(arguments.contains("id=\(device.udid!)")) }
-        #expect(launcher.started.first?.environment["SIMCTLHOUSE_UDIDS"]?.split(separator: " ").count == 2)
+        let environment = try #require(launcher.started.first?.environment)
+        #expect(Set(environment["SIMCTLHOUSE_UDIDS"]?.split(separator: ",").map(String.init) ?? []) == Set(devices.compactMap(\.udid)))
+        #expect(environment["SIMCTLHOUSE_UDID"] == nil)
+        #expect(environment["SIMCTLHOUSE_UDID_1"] != nil)
     }
 
     @Test func aFailedAcquireStartsNothing() throws {

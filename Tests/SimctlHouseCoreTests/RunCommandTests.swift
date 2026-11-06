@@ -89,15 +89,39 @@ import Testing
         let single = RunEnvironment.adding(one, to: ["PATH": "/usr/bin", "SIMCTLHOUSE_UDID": "stale"])
         #expect(single["PATH"] == "/usr/bin")
         #expect(single["SIMCTLHOUSE_UDID"] == one[0].udid)
-        #expect(single["SIMCTLHOUSE_DEVICE"] == "amber-falcon")
+        #expect(single["SIMCTLHOUSE_DEVICE_NAME"] == "amber-falcon")
         #expect(single["SIMCTLHOUSE_LEASE_ID"] == "l1")
         #expect(single["SIMCTLHOUSE_UDIDS"] == one[0].udid)
+        #expect(single["SIMCTLHOUSE_DEVICE_NAMES"] == "amber-falcon")
+        #expect(single["SIMCTLHOUSE_UDID_0"] == one[0].udid)
+        #expect(single["SIMCTLHOUSE_DEVICE_NAME_0"] == "amber-falcon")
+        #expect(single["SIMCTLHOUSE_LEASE_ID_0"] == "l1")
+        #expect(single["SIMCTLHOUSE_UDID_1"] == nil)
+    }
 
-        // Several devices: only the lists, so a script written for one device fails instead of using the first.
+    @Test func setsListsAndIndexedVariablesForSeveralDevices() {
+        // Only the lists and indexed variables, so a script written for one device fails instead of using the first.
         let several = RunEnvironment.adding(two, to: ["SIMCTLHOUSE_UDID": "stale"])
         #expect(several["SIMCTLHOUSE_UDID"] == nil)
-        #expect(several["SIMCTLHOUSE_UDIDS"] == two.map(\.udid).joined(separator: " "))
-        #expect(several["SIMCTLHOUSE_DEVICES"] == "amber-falcon wild-dragon")
+        #expect(several["SIMCTLHOUSE_DEVICE_NAME"] == nil)
+        #expect(several["SIMCTLHOUSE_LEASE_ID"] == nil)
+        #expect(several["SIMCTLHOUSE_UDIDS"] == two.map(\.udid).joined(separator: ","))
+        #expect(several["SIMCTLHOUSE_DEVICE_NAMES"] == "amber-falcon,wild-dragon")
+        #expect(several["SIMCTLHOUSE_UDID_0"] == two[0].udid)
+        #expect(several["SIMCTLHOUSE_UDID_1"] == two[1].udid)
+        #expect(several["SIMCTLHOUSE_DEVICE_NAME_1"] == "wild-dragon")
+        #expect(several["SIMCTLHOUSE_LEASE_ID_1"] == "l2")
+    }
+
+    @Test func clearsWhatAnOuterRunLeftBehind() {
+        let outer = RunEnvironment.adding(two, to: ["PATH": "/usr/bin", "SIMCTLHOUSE_UDID_SUFFIX": "not ours"])
+        let inner = RunEnvironment.adding(one, to: outer)
+        #expect(inner["SIMCTLHOUSE_UDID_1"] == nil)
+        #expect(inner["SIMCTLHOUSE_DEVICE_NAME_1"] == nil)
+        #expect(inner["SIMCTLHOUSE_LEASE_ID_1"] == nil)
+        #expect(inner["SIMCTLHOUSE_UDIDS"] == one[0].udid)
+        #expect(inner["SIMCTLHOUSE_UDID_SUFFIX"] == "not ours")
+        #expect(inner["PATH"] == "/usr/bin")
     }
 
     @Test func exitCodesKeepClearOfTheCommandsOwnWhereTheyCan() {
