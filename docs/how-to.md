@@ -330,7 +330,8 @@ By hand:
 3. Run `scripts/smoke-test.sh dist/simctlhouse-1.4.0-macos.tar.gz`: in a throwaway home, the shipped binary runs every test in `scripts/smoke`, each checking one thing against real simulators, such as `acquire --skip-boot`, the daemon starting and stopping on its own, and what `run` hands its command; afterwards the script checks that no other simulator was touched and that the number of simulators is the same before and after.
    The tests share one pool and run in order, and those that need no running simulator pass `--skip-boot`, so the suite boots only where it checks booting; between tests nothing may stay leased and the daemon must stop on its own, so each also runs alone: `scripts/smoke-test.sh TARBALL run-reuses-device`.
    A new test is a script `scripts/smoke/NN-name.sh` whose second line describes what it checks; it sources `lib.sh` and leaves nothing leased.
-4. Tag the commit `v1.4.0`, push it, and attach the tarball to a GitHub release of that tag.
+4. Tag the commit the script printed (also in `dist/release-1.4.0.commit`) `v1.4.0`, push that commit and the tag, and attach the tarball to a GitHub release of that tag.
+   Use that commit rather than `HEAD`, since other agents may have committed after the build.
 5. Copy `dist/simctlhouse.rb` to `Formula/simctlhouse.rb` in the tap and push.
    The tap's `tests` workflow then audits the formula, installs it on macOS 15 and 26 and runs its `test` block; wait for it to pass.
 

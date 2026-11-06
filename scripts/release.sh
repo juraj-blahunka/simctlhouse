@@ -59,10 +59,14 @@ source_version="$(sed -nE 's/^ *version: "([^"]+)",$/\1/p' "$repo_dir/Sources/si
     fail "SimctlHouse.swift says version \"$source_version\", not \"$version\". Bump it, commit, then release."
 
 cd "$repo_dir"
+# The paths the release is built from. Other uncommitted files (docs, other agents' work) do not affect the build.
+source_paths=(Package.swift Package.resolved Sources skills LICENSE scripts/build.sh)
+sources_clean() { [[ -z "$(git status --porcelain -- "${source_paths[@]}")" ]]; }
 if [[ $allow_dirty -eq 0 ]]; then
-    [[ -z "$(git status --porcelain -- Package.swift Package.resolved Sources skills LICENSE scripts/build.sh)" ]] ||
-        fail "uncommitted changes in the sources; commit them, or pass --allow-dirty to try the script out."
+    sources_clean || fail "uncommitted changes in the sources; commit them, or pass --allow-dirty to try the script out."
 fi
+# The commit this build is made from. Publishing tags and pushes exactly this commit, not whatever HEAD is by then.
+commit="$(git rev-parse HEAD)"
 if tagged="$(git rev-parse -q --verify "refs/tags/v$version^{commit}")"; then
     [[ "$tagged" == "$(git rev-parse HEAD)" ]] || fail "tag v$version exists but does not point at HEAD."
 fi
@@ -94,7 +98,7 @@ swift test --package-path "$repo_dir"
 name="simctlhouse-$version"
 stage="$dist/$name"
 tarball="$dist/$name-macos.tar.gz"
-rm -rf "$stage" "$tarball" "$dist/simctlhouse.rb" "$dist/notarize.zip"
+rm -rf "$stage" "$tarball" "$dist/simctlhouse.rb" "$dist/notarize.zip" "$dist/release-$version.commit"
 
 "$repo_dir/scripts/build.sh" --developer-id ${identity_args[@]+"${identity_args[@]}"} "$stage/bin/simctlhouse"
 
@@ -179,9 +183,20 @@ class Simctlhouse < Formula
 end
 EOF
 
+# Other agents may share this checkout: make sure nobody changed the sources or moved HEAD while this built.
+if [[ $allow_dirty -eq 0 ]]; then
+    # Compares the working tree with $commit, so it also catches source changes someone committed meanwhile.
+    git diff --quiet "$commit" -- "${source_paths[@]}" && [[ -z "$(git ls-files --others --exclude-standard -- "${source_paths[@]}")" ]] ||
+        fail "the sources changed during the build, so the binary may not match $commit; release again."
+fi
+[[ "$(git rev-parse HEAD)" == "$commit" ]] ||
+    echo "note: HEAD moved during the build; this release is $commit, and later commits are not in it." >&2
+echo "$commit" >"$dist/release-$version.commit"
+
 step "Done"
 cat <<EOF
   $tarball
   sha256 $sha256
+  commit $commit
   $dist/simctlhouse.rb
 EOF

@@ -55,6 +55,7 @@ git commit -m "chore: release X.Y.Z" Sources/simctlhouse/SimctlHouse.swift
 
 ## 4. Write the release notes with the user
 
+Note the commit you draft from (`git rev-parse HEAD`); step 7 checks that the build contains nothing the notes have not seen.
 Draft the notes from what changed since the last release:
 
 ```sh
@@ -92,7 +93,9 @@ scripts/release.sh X.Y.Z
 
 It takes a few minutes, most of it waiting for Apple's notarization; allow up to 10 minutes.
 It refuses to run on a version mismatch, uncommitted sources, or a tag pointing elsewhere, runs the tests and lint, builds through `scripts/build.sh`, checks that Apple published the notarization ticket, and verifies its own tarball.
-It ends by printing the tarball path, its sha256, and `dist/simctlhouse.rb`.
+It ends by printing the tarball path, its sha256, the commit it built, and `dist/simctlhouse.rb`.
+It writes that commit to `dist/release-X.Y.Z.commit`, and fails if the sources changed while it ran.
+From here on, the release is that commit, called `<built>` below, even if other agents commit to `main` meanwhile.
 
 ## 6. Smoke test the tarball
 
@@ -109,17 +112,23 @@ If it reports missing or extra simulators, show the list to the user and stop: o
 ## 7. Publish without asking
 
 Everything from here is public and hard to undo, but the user's acceptance of the release notes is the go-ahead.
-If `scripts/release.sh` finished (tests, lint, build, notarization and its own tarball check all passed) and the smoke test passed, go on to step 8 without asking again.
+If `scripts/release.sh` finished (tests, lint, build, notarization and its own tarball check all passed) and the smoke test passed, go on to step 8 without asking again, with two exceptions where you show the commits and ask first:
+
+- `git log --oneline <notes commit>..<built>` is not empty: someone committed after the notes were drafted, so the notes may miss a change.
+- `git log --oneline origin/main..<built>` holds commits that are not part of this release's work, such as another agent's unfinished change.
+  Everything in that list goes public with the release, and the tarball was built from it.
 If any of them failed, stop and report it with its output instead; publish only after the cause is fixed and both have passed on a fresh build.
-Tell the user in one line that you are publishing: the version, the commit (`git log --oneline -1`) and the sha256.
+Tell the user in one line that you are publishing: the version, `<built>` (`git log --oneline -1 <built>`), the number of commits it pushes, and the sha256.
 
 ## 8. Publish
 
-In this order, so that every published step points at something that already exists:
+In this order, so that every published step points at something that already exists.
+Push and tag `<built>` (from `dist/release-X.Y.Z.commit`), never `main` or `HEAD`: commits made after the build stay local and are not part of the release.
 
 ```sh
-git push origin main
-git tag -a vX.Y.Z -m "simctlhouse X.Y.Z"
+built="$(cat dist/release-X.Y.Z.commit)"
+git push origin "$built:refs/heads/main"
+git tag -a vX.Y.Z "$built" -m "simctlhouse X.Y.Z"
 git push origin vX.Y.Z
 gh release create vX.Y.Z dist/simctlhouse-X.Y.Z-macos.tar.gz \
     --repo juraj-blahunka/simctlhouse --verify-tag --title "simctlhouse X.Y.Z" --notes-file dist/release-notes-X.Y.Z.md
@@ -154,15 +163,21 @@ gh run watch <databaseId> --repo juraj-blahunka/homebrew-tap --exit-status
 ```
 
 Then check the formula from this machine.
-Homebrew refuses to load formulae from a tap nobody trusted, even for `brew info`, so trust this one formula first; that changes the user's Homebrew configuration, as `brew install juraj-blahunka/tap/simctlhouse` would.
-The rest only reads and downloads; it installs nothing:
+Homebrew refuses to load formulae from a tap nobody trusted, even for `brew info`, so trust this one formula for the check, and afterwards put the user's trust settings back the way they were.
+The rest only reads and downloads; it installs nothing.
+Run it as one Bash call, so the untrust step runs even when a check fails:
 
 ```sh
 brew tap juraj-blahunka/tap 2>/dev/null; brew update
+was_trusted=0
+brew trust --json v1 | grep -q '"juraj-blahunka/tap/simctlhouse"' && was_trusted=1
 brew trust --formula juraj-blahunka/tap/simctlhouse
-brew info juraj-blahunka/tap/simctlhouse            # shows X.Y.Z
-brew fetch --force juraj-blahunka/tap/simctlhouse   # downloads and checks the sha256
-brew audit --strict --online juraj-blahunka/tap/simctlhouse
+failed=0
+brew info juraj-blahunka/tap/simctlhouse || failed=1            # shows X.Y.Z
+brew fetch --force juraj-blahunka/tap/simctlhouse || failed=1   # downloads and checks the sha256
+brew audit --strict --online juraj-blahunka/tap/simctlhouse || failed=1
+[ "$was_trusted" -eq 1 ] || brew untrust --formula juraj-blahunka/tap/simctlhouse
+exit $failed
 ```
 
 If the user already has simctlhouse installed from the tap, offer `brew upgrade simctlhouse` and then `simctlhouse --version` and `simctlhouse skill status`.
