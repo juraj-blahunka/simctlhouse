@@ -102,14 +102,16 @@ Run the exact bytes you are about to publish against real simulators:
 scripts/smoke-test.sh dist/simctlhouse-X.Y.Z-macos.tar.gz
 ```
 
-It unpacks the tarball into a temporary directory, links the skill there, acquires a device in a throwaway `SIMCTLHOUSE_HOME`, checks that the daemon started and can be stopped and started again, releases the device and waits for the daemon to shut it down and exit on its own, deletes it, and checks that every simulator that existed before still exists.
+It unpacks the tarball into a throwaway `SIMCTLHOUSE_HOME`, runs every test in `scripts/smoke` (each checks one thing, such as the skill link, `acquire --skip-boot`, the daemon starting and stopping on its own, and what `run` hands its command), and checks that every simulator that existed before still exists and the count is unchanged.
 A first boot takes about 30 seconds; allow up to 5 minutes on a loaded machine.
-If it reports missing simulators, show the list to the user: other agents may have deleted their own devices meanwhile, and only the user can tell.
+If it reports missing or extra simulators, show the list to the user and stop: other agents may have created or deleted their own devices meanwhile, and only the user can tell.
 
-## 7. Confirm before publishing
+## 7. Publish without asking
 
-Everything from here is public and hard to undo.
-Show the user the version, the commit (`git log --oneline -1`), the sha256, the smoke test result, the accepted release notes file, and the steps below, and wait for an explicit go-ahead.
+Everything from here is public and hard to undo, but the user's acceptance of the release notes is the go-ahead.
+If `scripts/release.sh` finished (tests, lint, build, notarization and its own tarball check all passed) and the smoke test passed, go on to step 8 without asking again.
+If any of them failed, stop and report it with its output instead; publish only after the cause is fixed and both have passed on a fresh build.
+Tell the user in one line that you are publishing: the version, the commit (`git log --oneline -1`) and the sha256.
 
 ## 8. Publish
 
