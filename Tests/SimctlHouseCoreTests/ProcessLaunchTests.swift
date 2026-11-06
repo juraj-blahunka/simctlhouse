@@ -98,11 +98,14 @@ import Testing
         let descriptor = open("/dev/null", O_RDONLY)
         defer { close(descriptor) }
         let report = scratch.appending(path: "report")
+        // The leak check runs before the redirected block: inside it, sh keeps its own stdout on fd 10,
+        // which would look like a leak whenever the descriptor above happens to be 10.
         let script = """
             null=$(stat -f %Z /dev/null)
+            leak=no-leak; test -e /dev/fd/\(descriptor) && leak=leak
             { test "$(stat -f %Z /dev/fd/0)" = "$null" && echo stdin-null
               test "$(stat -f %Z /dev/fd/2)" = "$null" && echo stderr-null
-              test -e /dev/fd/\(descriptor) || echo no-leak; } > '\(report.path).tmp'
+              echo "$leak"; } > '\(report.path).tmp'
             mv '\(report.path).tmp' '\(report.path)'
             sleep 30
             """

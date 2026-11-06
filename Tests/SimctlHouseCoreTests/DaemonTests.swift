@@ -222,6 +222,28 @@ import Testing
         held.release()
     }
 
+    @Test func aCommandCheckingTheLockDoesNotTurnTheDaemonAway() async throws {
+        _ = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
+        // What `DaemonLock.isHeld` does to check: it takes the lock for a moment. Here the moment is stretched,
+        // as when the checking command is preempted, and the daemon starts right inside it.
+        let path = h.root.appending(path: "daemon.lock")
+        try FileManager.default.createDirectory(at: h.root, withIntermediateDirectories: true)
+        let probe = open(path.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        #expect(flock(probe, LOCK_EX | LOCK_NB) == 0)
+        let signals = DaemonSignals()
+        let daemon = Daemon(pool: h.pool, version: "test", build: build, signals: signals, sleep: { _ in signals.stop() })
+        let served = Background { try daemon.serve() }
+        // A thread of its own, so the moment stays short even while other tests keep Swift's pool busy.
+        let checked = Background {
+            usleep(50_000)
+            flock(probe, LOCK_UN)
+            close(probe)
+        }
+        try await checked.value
+        let outcome = try await served.value
+        #expect(outcome == .stopped)
+    }
+
     @Test func stopsWhenAsked() throws {
         _ = try h.pool.acquire(AcquireRequest(spec: DeviceSpec()))
         let signals = DaemonSignals()

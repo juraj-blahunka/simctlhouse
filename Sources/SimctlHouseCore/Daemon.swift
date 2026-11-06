@@ -71,14 +71,23 @@ final class DaemonLock: @unchecked Sendable {
 
     deinit { release() }
 
+    /// How long `acquire` keeps trying while the lock is taken. `isHeld` takes the lock for a moment to check it,
+    /// so a daemon starting inside a command's check would otherwise give up although no daemon runs.
+    /// A real daemon holds the lock for its whole life, so waiting this long changes no answer, only delays a duplicate's exit.
+    static let checkPatience: TimeInterval = 0.5
+
     /// Takes the lock and records `record` in the file, or returns nil while another daemon holds it.
     static func acquire(at path: URL, record: DaemonRecord) throws -> DaemonLock? {
         try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         let descriptor = open(path.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
         guard descriptor >= 0 else { throw posixError("Cannot open \(path.path)") }
-        guard try tryLock(descriptor, path: path) else {
-            close(descriptor)
-            return nil
+        let deadline = Date().addingTimeInterval(checkPatience)
+        while try !tryLock(descriptor, path: path) {
+            guard Date() < deadline else {
+                close(descriptor)
+                return nil
+            }
+            usleep(10_000)
         }
         let held = DaemonLock(descriptor: descriptor)
         let data = try StateStore.encoder.encode(record)

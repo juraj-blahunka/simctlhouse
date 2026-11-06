@@ -188,6 +188,7 @@ The daemon exits once `nextWake` finds nothing, so it runs only while something 
 There is no port and no socket: commands never talk to the daemon.
 The daemon holds an exclusive `flock` on `daemon.lock` for its whole life and writes its `DaemonRecord` (pid, start time, version, binary) into that file.
 Whether a daemon runs is whether that lock is held; the kernel drops it when the daemon dies, so there is no stale pid file to second-guess.
+Checking the lock (`DaemonLock.isHeld`) takes it for a moment, so a daemon that finds a lock taken keeps trying for half a second (`DaemonLock.checkPatience`) before it concludes another daemon holds it; otherwise a daemon starting inside a command's check would exit although none runs.
 
 `acquire`, `release`, `renew` and `run` call `DaemonLauncher.ensureRunning` after their change has committed, unless `SIMCTLHOUSE_DAEMON=0`:
 
