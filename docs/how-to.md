@@ -67,6 +67,7 @@ The skill only teaches agents the workflow, and it comes in the [Agent Skills](h
 
   Other agents share this machine's simulators, so never pick one yourself (`booted`, a device name, or one from `xcrun simctl list`).
   Run a single test or build command as `simctlhouse run --holder "<task>" -- xcodebuild test -scheme App`, without a `-destination`: it leases a simulator, adds the destination, and releases the simulator when the command exits.
+  Add `--skip-boot` when the command needs no running simulator, such as `xcodebuild build`.
   For several steps that need the same simulator, run `UDID=$(simctlhouse acquire --holder "<task>")`, use the UDID everywhere, `simctlhouse renew "$UDID"` during long work, and `simctlhouse release "$UDID"` when done, also after failures.
   `simctlhouse --help` has the details.
   ```
@@ -82,7 +83,8 @@ Without either, the label names the agent process and the directory it works in,
 simctlhouse run --holder "$TASK_ID" -- xcodebuild test -scheme App
 ```
 
-It leases a device as `acquire` does (the same `--family`, `--model`, `--os`, or a device name or UDID), runs the command, and releases the device when the command exits.
+It leases a device as `acquire` does (the same `--family`, `--model`, `--os`, `--skip-boot`, or a device name or UDID), runs the command, and releases the device when the command exits.
+With `--skip-boot`, a command that needs no running simulator, such as `simctlhouse run --skip-boot -- xcodebuild build -scheme App`, does not wait about 30 seconds for a new device to boot.
 The lease is bound to the `run` process instead of a timer, so it never needs `renew` and never expires mid-test; `list` shows `until pid <pid> exits` for it.
 The device is released however the command ends:
 

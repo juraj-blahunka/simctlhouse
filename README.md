@@ -33,6 +33,7 @@ simctlhouse run --holder "fix login test" -- xcodebuild test -scheme App
 ```
 
 `run` leases and boots a free iPhone, adds `-destination id=<UDID>` to xcodebuild, and hands the device back to the pool as soon as the command exits.
+For a command that needs no running simulator, such as `xcodebuild build`, `--skip-boot` leases the device without waiting for it to boot.
 The lease lasts exactly as long as the command, so it cannot be forgotten or run out mid-test, and the device comes back even when the command fails, is interrupted or is killed (within a minute if simctlhouse itself is killed).
 
 Any other command gets the device through `{udid}` and `{name}` in its arguments, or `$SIMCTLHOUSE_UDID` and `$SIMCTLHOUSE_DEVICE_NAME` in its environment:
@@ -83,9 +84,9 @@ ready-lion     available  Shutdown  iPhone 18 Pro  27.2  -                      
 
 | Command | Purpose |
 | --- | --- |
-| `acquire [--family iphone\|ipad] [--model NAME] [--os VERSION] [--holder LABEL] [--json]` | Lease a free matching device or create one, boot it, print the UDID |
-| `acquire <name\|udid> [--holder LABEL] [--json]` | Lease that specific free device |
-| `run [<name\|udid> \| --family --model --os] [--count N] [--timeout SECONDS] [--holder LABEL] -- COMMAND...` | Lease devices for as long as COMMAND runs, then release them; exits with COMMAND's code |
+| `acquire [--family iphone\|ipad] [--model NAME] [--os VERSION] [--skip-boot] [--holder LABEL] [--json]` | Lease a free matching device or create one, boot it (unless `--skip-boot`), print the UDID |
+| `acquire <name\|udid> [--skip-boot] [--holder LABEL] [--json]` | Lease that specific free device |
+| `run [<name\|udid> \| --family --model --os] [--count N] [--skip-boot] [--timeout SECONDS] [--holder LABEL] -- COMMAND...` | Lease devices for as long as COMMAND runs, then release them; exits with COMMAND's code |
 | `release <name\|udid> [--lease-id ID]` | Return a device to the pool |
 | `renew <name\|udid> [--lease-id ID]` | Extend a lease by a full lease length from now |
 | `list [booted\|leased\|<search term>...] [--json \| --watch]` | Show devices, filtered like `simctl list devices`; `--watch` redraws every second |

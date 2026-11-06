@@ -111,7 +111,7 @@ How the others are read:
 `simctlhouse run` (`Runner`) leases devices, runs one command on them, and releases them when it exits (D33, D34).
 
 1. Check the command: a placeholder for a device the run will not lease (`{udid}` with `--count`, `{udid2}` with `--count 2`), and an xcodebuild `-destination` that no lease could match, are refused before anything is leased (`RunCommand.check`).
-2. Acquire `--count` devices at the same time, each as `acquire` does, with the lease's `owner` set to this process.
+2. Acquire `--count` devices at the same time, each as `acquire` does (booting it unless `--skip-boot`), with the lease's `owner` set to this process.
    If one fails, release the others.
 3. Make sure the daemon runs.
 4. Fill in the devices (`RunCommand`): replace `{udid}`, `{name}`, `{udid<i>}` and `{name<i>}`, add `-destination id=<UDID>` per device to a direct xcodebuild, and refuse a `-destination` naming another simulator.

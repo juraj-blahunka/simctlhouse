@@ -19,7 +19,7 @@ Always get your device from simctlhouse, in one of two ways:
 simctlhouse run --holder "<short task label>" -- xcodebuild test -scheme App
 ```
 
-It leases a device, boots it, runs the command, and releases the device when the command exits, also when it fails, is interrupted or is killed.
+It leases a device, boots it (unless you pass `--skip-boot`), runs the command, and releases the device when the command exits, also when it fails, is interrupted or is killed.
 The lease lasts as long as the command, so there is nothing to renew.
 
 - xcodebuild gets `-destination id=<UDID>` added.
@@ -35,6 +35,7 @@ The lease lasts as long as the command, so there is nothing to renew.
 - `--count N` leases N devices; xcodebuild then tests on all of them at once (add `-parallelize-tests-among-destinations` to split the tests instead).
   Other commands name each device with `{udid0}` to `{udid<N-1>}` (`{udid}` is refused then), or read `$SIMCTLHOUSE_UDID_0` to `$SIMCTLHOUSE_UDID_<N-1>`.
 - `--timeout SECONDS` stops the command after that long, with exit code 124.
+- `--skip-boot` skips the boot when the command needs no running simulator (`xcodebuild build`, `build-for-testing`).
 - stdout is the command's own; simctlhouse's messages go to stderr, prefixed with `simctlhouse:`.
 - If your shell tool times out sooner than the command may take, run it in the background rather than under that timeout.
 

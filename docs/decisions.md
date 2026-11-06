@@ -366,13 +366,15 @@ The daemon shuts down a free device once its idle time is up, and the device is 
 The bound is not strict, since each garbage collection between attempts can itself take long when it has to re-create a device.
 Trade-off: a device that is hung in a long operation makes `delete` or `erase` wait the full 30 seconds before it fails.
 
-## D37. `acquire --skip-boot` leases a device as it is
+## D37. `acquire --skip-boot` and `run --skip-boot` lease a device as it is
 
 Booting takes about 30 seconds for a new device, and some work needs no running simulator: `xcodebuild build` only needs a destination, and the smoke test checks leasing and the daemon, not booting.
 `acquire --skip-boot` leases a device without booting it; a new one stays shut down, and a free one that is already booted stays booted, since shutting it down would only cost the next agent a boot.
 It still prefers a booted device, like a plain `acquire`, so it never leaves a booted device idle while another one is shut down.
 The lease starts once the device exists, as after a boot.
-`run` always boots, since it hands the device to a command that usually needs it running.
+`run` boots by default, since it hands the device to a command that usually needs it running, and takes `--skip-boot` too, for a self-contained `xcodebuild build` or `build-for-testing`.
+At first `run` always booted; but a build is exactly the one-command job `run` is for, and making it wait for a boot it does not need pushed agents back to `acquire` and `release` just to skip it.
+xcodebuild still gets `-destination id=<UDID>` for the shut down device, and a command that does need it running (`xcodebuild test`) boots it itself.
 Trade-off: a command that does need a running simulator fails or boots it itself; the device stays in the pool either way, and the daemon shuts it down once it is free and idle.
 
 ## D38. `run` hands the device to any tool, not only xcodebuild

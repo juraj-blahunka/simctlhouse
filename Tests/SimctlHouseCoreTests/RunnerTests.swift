@@ -118,6 +118,19 @@ final class FakeSignals: RunSignals, @unchecked Sendable {
         #expect(environment["SIMCTLHOUSE_UDID_1"] != nil)
     }
 
+    @Test func leasesWithoutBootingWhenAskedTo() throws {
+        launcher.onStart = { events in events.post(.exited(status: 0)) }
+        var skipBoot = request(["xcodebuild", "build", "-scheme", "App"], count: 2)
+        skipBoot.acquire.boot = false
+        #expect(try runner().run(skipBoot) == .exited(0))
+        #expect(h.backend.callCount(prefix: "boot") == 0)
+        let devices = try h.state().devices
+        #expect(devices.count == 2)
+        for device in devices { #expect(h.backend.device(device.udid!)?.state == "Shutdown") }
+        // xcodebuild still gets the devices, which it boots itself if it needs them running.
+        #expect(launcher.started.first?.arguments.filter { $0 == "-destination" }.count == 2)
+    }
+
     @Test func aFailedAcquireStartsNothing() throws {
         #expect(throws: SimctlHouseError.unknownModel("Nope 1")) {
             try runner().run(request(["true"], spec: DeviceSpec(model: "Nope 1")))
