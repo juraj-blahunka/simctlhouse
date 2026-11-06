@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs a release tarball end to end against real simulators, the way a user would after `brew install`.
 # Each script in scripts/smoke checks one thing; they run in order against one throwaway pool, so later ones reuse
-# the device an earlier one booted instead of booting their own.
+# the device an earlier one created instead of creating their own. Tests whose command needs no running simulator pass
+# --skip-boot to run and acquire; only those that check booting boot.
 # Between scripts, nothing may be left leased and the daemon must stop on its own, so each starts from a pool of free,
 # shut down devices and no daemon, and can also run alone.
 # Afterwards, no other simulator may have been touched and the number of simulators must be unchanged.

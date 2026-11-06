@@ -328,7 +328,7 @@ By hand:
    It refuses to run if the version does not match, if the sources have uncommitted changes, or if tag `v1.4.0` exists elsewhere.
    It runs the tests and lint, builds and signs through `scripts/build.sh`, notarizes, checks that Apple published the notarization ticket, packs `dist/simctlhouse-1.4.0-macos.tar.gz`, installs that tarball into a temporary directory to check it, and writes `dist/simctlhouse.rb`.
 3. Run `scripts/smoke-test.sh dist/simctlhouse-1.4.0-macos.tar.gz`: in a throwaway home, the shipped binary runs every test in `scripts/smoke`, each checking one thing against real simulators, such as `acquire --skip-boot`, the daemon starting and stopping on its own, and what `run` hands its command; afterwards the script checks that no other simulator was touched and that the number of simulators is the same before and after.
-   The tests share one pool and run in order, so only the first `run` pays for a first boot; between tests nothing may stay leased and the daemon must stop on its own, so each also runs alone: `scripts/smoke-test.sh TARBALL run-reuses-device`.
+   The tests share one pool and run in order, and those that need no running simulator pass `--skip-boot`, so the suite boots only where it checks booting; between tests nothing may stay leased and the daemon must stop on its own, so each also runs alone: `scripts/smoke-test.sh TARBALL run-reuses-device`.
    A new test is a script `scripts/smoke/NN-name.sh` whose second line describes what it checks; it sources `lib.sh` and leaves nothing leased.
 4. Tag the commit `v1.4.0`, push it, and attach the tarball to a GitHub release of that tag.
 5. Copy `dist/simctlhouse.rb` to `Formula/simctlhouse.rb` in the tap and push.

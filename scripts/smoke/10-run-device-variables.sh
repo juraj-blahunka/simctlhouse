@@ -2,7 +2,7 @@
 # run hands the command its device through variables and placeholders.
 source "$(dirname "$0")/lib.sh"
 
-out="$("$bin" run --holder smoke-run -- sh -c \
+out="$("$bin" run --skip-boot --holder smoke-run -- sh -c \
     'echo "$SIMCTLHOUSE_UDID $SIMCTLHOUSE_UDID_0 $SIMCTLHOUSE_UDIDS {udid} {udid0} $SIMCTLHOUSE_DEVICE_NAME {name} {name0}"')"
 read -r udid udid0 udids arg arg0 name name_arg name_arg0 <<<"$out"
 [[ -n "$udid" && "$udid" == "$udid0" && "$udid" == "$udids" && "$udid" == "$arg" && "$udid" == "$arg0" ]] ||
