@@ -58,6 +58,20 @@ scripts/smoke-test.sh TARBALL [TEST...]  # run a release tarball through scripts
   Finish with `delete --all --force` and `daemon stop`, and check that the user's simulator count in `xcrun simctl list devices` is unchanged.
 - The machine may be heavily loaded by other agents; create and boot timings are noisy, so do not assert on them.
 
+## Verify
+
+How agents verify a change end to end; the `verify` skill runs it rung by rung and stops at the first failure.
+
+- Build: `swift build --build-tests` and `swift build -c release`
+- Lint: `scripts/lint.sh`
+- Test: `swift test`
+- End to end: build a dev tarball the way a release lays it out:
+  `d=$(mktemp -d); v=$(.build/release/simctlhouse --version); s=$d/simctlhouse-$v; scripts/build.sh $s/bin/simctlhouse && ditto skills/simctlhouse $s/share/simctlhouse/skills/simctlhouse && cp LICENSE $s/ && COPYFILE_DISABLE=1 tar -C $d --no-xattrs -czf $d/simctlhouse-$v-macos.tar.gz simctlhouse-$v`.
+  Run the smoke scripts that cover the change (`scripts/smoke-test.sh <tarball> 04-acquire-starts-daemon ...`, all of them when unsure), and exercise the changed commands with `.build/release/simctlhouse` in `SIMCTLHOUSE_HOME=$(mktemp -d)`, using `--skip-boot` where booting is not what changed.
+- Look: none (CLI); check the changed commands' output text instead.
+- Isolation: only throwaway `SIMCTLHOUSE_HOME`s; never the user's own home or a simulator by name.
+- Cleanup: in each throwaway home, `release` what was acquired, `delete --all --force` and `daemon stop`; `xcrun simctl list devices | grep -c "("` must be the same before and after.
+
 ## Style
 
 - Match the surrounding code: small types, doc comments that explain why, no comment noise.
