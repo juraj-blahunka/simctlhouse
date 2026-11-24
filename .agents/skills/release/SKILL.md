@@ -1,6 +1,8 @@
 ---
 name: release
 description: Release a new simctlhouse version end to end - bump the version, agree on release notes with the user, build the signed and notarized tarball with scripts/release.sh, tag, create the GitHub release, and publish the formula to the Homebrew tap. Use when asked to release, publish, ship or cut a simctlhouse version, or to update the Homebrew formula.
+metadata:
+  internal: "true"
 ---
 
 # Release simctlhouse

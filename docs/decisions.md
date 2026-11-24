@@ -468,3 +468,15 @@ If the status cannot be read, the device is handed out as before: the check only
 The check gives up after 10 seconds, so a simulator that says it is booted but no longer answers cannot hold `acquire` forever; a check that fails or times out is logged, and the device is handed out unchecked.
 The log names the status read, so a reboot nobody expected can be traced to its cause; any non-zero status counts, since a SpringBoard that was killed is restarted the same way as one that trapped.
 After a reboot SpringBoard is checked once more, and a device whose SpringBoard crashed again while it booted is logged and handed out as it is: rebooting it again would not help, and the next hand-out tries anew.
+
+## D42. `npx skills add` installs the skill from the repository
+
+The [skills CLI](https://github.com/vercel-labs/skills) (`npx skills add owner/repo`) installs Agent Skills from a repository into the many agents it knows, which reaches agents `skill install` does not detect.
+It already finds `skills/simctlhouse/SKILL.md`, but also the maintainers' `.agents/skills/release`, which it offered next to it.
+That skill is marked `metadata.internal: "true"`, which the CLI hides unless `INSTALL_INTERNAL_SKILLS=1` is set; the value is a string because the Agent Skills specification allows only string metadata values.
+The docs still pass `--skill simctlhouse`, so older tags that lack the marker install the same thing.
+
+It installs only the skill, so the skill tells agents to ask the user to install the binary when it is missing, rather than fall back to a simulator they pick.
+Its install is a copy in `~/.agents/skills/simctlhouse` with links to it from agents like Claude Code, and those links count as ours under D26: `skill install` replaces them and `simctlhouse uninstall` removes them, which is what someone removing simctlhouse wants.
+We did not teach `SkillInstaller` to recognise the skills CLI's installs; the docs say to use one of the two.
+Trade-off: unpinned, the skill comes from the default branch and can be ahead of the installed binary; the docs show pinning the release's tag, which `brew upgrade` does not move.

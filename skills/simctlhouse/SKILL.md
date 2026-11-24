@@ -8,6 +8,7 @@ description: Get an exclusive iOS simulator (iPhone or iPad) for building, testi
 Other agents use this machine's simulators at the same time.
 A simulator you pick yourself (by name, `booted`, or from `simctl list`) collides with theirs and fails at random.
 Always get your device from simctlhouse, and hold it only while something runs on it.
+If `simctlhouse` is not installed (`command -v simctlhouse` prints nothing), stop and ask the user to install it (`brew install juraj-blahunka/tap/simctlhouse`) rather than picking a simulator yourself.
 
 ## One lease per work item
 

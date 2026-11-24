@@ -150,6 +150,17 @@ This installs the signed and notarized release binary, and the agent skill next 
 `simctlhouse skill install` links the skill into every coding agent it finds (Claude Code, Codex and pi); `brew upgrade simctlhouse` then updates the skill too.
 To remove it, run `simctlhouse uninstall` first: it deletes the pool's simulators, stops the daemon, and removes the skill links and `~/.simctlhouse`, after asking. Then `brew uninstall simctlhouse`.
 
+### With `npx skills`
+
+```sh
+brew install juraj-blahunka/tap/simctlhouse
+npx skills add juraj-blahunka/simctlhouse --skill simctlhouse -g
+```
+
+The [skills CLI](https://github.com/vercel-labs/skills) installs the agent skill from this repository into any of the many agents it supports, instead of `simctlhouse skill install`.
+It installs only the skill: the binary still comes from Homebrew.
+Leave out `-g` to add the skill to the current project only; see the [how-to](docs/how-to.md#with-npx-skills) for pinning it to your release, updating and removing it.
+
 ### From source
 
 ```sh
@@ -162,7 +173,7 @@ Run `scripts/install.sh --help` for options, including `--uninstall`.
 
 ### Other agents
 
-Pass `--skills-dir` (to `simctlhouse skill install` or `scripts/install.sh`) for any agent that loads SKILL.md skills, or add a few lines to your project's `AGENTS.md` (see the [how-to](docs/how-to.md#use-it-from-any-agent)).
+Use `npx skills add` (above), or pass `--skills-dir` (to `simctlhouse skill install` or `scripts/install.sh`) for any agent that loads SKILL.md skills, or add a few lines to your project's `AGENTS.md` (see the [how-to](docs/how-to.md#use-it-from-any-agent)).
 
 ## Docs
 

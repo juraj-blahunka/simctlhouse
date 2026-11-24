@@ -41,6 +41,26 @@ Running the binary from inside `Cellar/` links a versioned path that the next up
 `--source DIR` links another skill directory instead of the shipped one; `scripts/install.sh` uses it to link the checkout.
 `skill uninstall` also removes links left broken by an uninstalled package.
 
+### With `npx skills`
+
+The [skills CLI](https://github.com/vercel-labs/skills) installs the skill from GitHub into the agents it supports, which are many more than the three `skill install` detects.
+It installs only the skill; install the binary from a release or from source as above.
+
+```sh
+npx skills add juraj-blahunka/simctlhouse --skill simctlhouse -g          # for all projects, into the agents you pick
+npx skills add "juraj-blahunka/simctlhouse@v$(simctlhouse --version)" --skill simctlhouse -g   # the skill of your installed release
+npx skills update simctlhouse -g
+npx skills remove simctlhouse -g
+```
+
+Without `-g` it installs into the current project (`.agents/skills`, `.claude/skills` and so on), which you can commit so everyone on the project gets it.
+`--skill simctlhouse` skips the maintainers' `release` skill, which releases up to 0.4.1 do not hide.
+Unpinned, it installs the skill from the default branch, which can describe flags your installed binary does not have yet; pin your release's tag to match, and add it again after `brew upgrade`.
+
+Use either `npx skills` or `simctlhouse skill install`, not both.
+`npx skills` copies the skill to `~/.agents/skills/simctlhouse` and links agents like Claude Code to that copy; `skill status` reports such a link as `linked`, `skill install` replaces it, and `simctlhouse uninstall` removes it.
+A copy made with `npx skills add --copy` is `foreign`: `skill install` stops rather than replace it.
+
 ## Uninstall
 
 ```sh
@@ -59,7 +79,7 @@ simctlhouse itself is a plain CLI; any agent that can run shell commands can use
 The skill only teaches agents the workflow, and it comes in the [Agent Skills](https://agentskills.io/specification) (SKILL.md) format that Claude Code, Codex, pi and several other agents load.
 
 - Claude Code, Codex and pi: `simctlhouse skill install` (Homebrew) or `scripts/install.sh` (source) links the skill into each one it finds.
-- Another agent that loads SKILL.md skills: pass `--skills-dir <that agent's skills directory>` to either.
+- Another agent that loads SKILL.md skills: `npx skills add juraj-blahunka/simctlhouse --skill simctlhouse -g` (see [With `npx skills`](#with-npx-skills)), or pass `--skills-dir <that agent's skills directory>` to either of the above.
 - An agent without skills: add this to the project's `AGENTS.md` (or the agent's own instructions file):
 
   ```markdown
