@@ -29,7 +29,7 @@ struct SimctlHouse: ParsableCommand {
               SIMCTLHOUSE_PREPARE        prepare hook: shell command run on every new or erased device; empty for none
             Each overrides the same setting in <home>/config.json.
             """,
-        version: "0.4.1",
+        version: "0.4.2",
         subcommands: [
             Acquire.self, Release.self, Renew.self, Run.self, List.self, UDID.self, History.self, Create.self, Delete.self, Erase.self, GC.self,
             DaemonCommand.self, Config.self, Home.self, Skill.self, UninstallCommand.self, Version.self,
